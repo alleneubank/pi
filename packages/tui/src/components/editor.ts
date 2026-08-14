@@ -710,11 +710,18 @@ export class Editor implements Component, Focusable {
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
 
-					if (this.autocompletePrefix.startsWith("/")) {
-						this.cancelAutocomplete();
+					// Line-start command completions fall through to submit so Enter
+					// both accepts and runs the command. Mid-prompt completions
+					// (token not at line start) accept in place and keep editing.
+					const currentLine = this.state.lines[this.state.cursorLine] || "";
+					const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
+					const isLineStartCommandCompletion =
+						this.autocompletePrefix.startsWith("/") && textBeforeCursor.trimStart().startsWith("/");
+
+					this.cancelAutocomplete();
+					if (isLineStartCommandCompletion) {
 						// Fall through to submit
 					} else {
-						this.cancelAutocomplete();
 						if (this.onChange) this.onChange(this.getText());
 						return;
 					}
@@ -2231,7 +2238,7 @@ export class Editor implements Component, Focusable {
 	private setAutocompleteTriggerCharacters(triggerCharacters: string[]): void {
 		const next = [...DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS];
 		for (const character of triggerCharacters) {
-			if (character.length !== 1 || character === "/" || isWhitespaceChar(character) || next.includes(character)) {
+			if (character.length !== 1 || isWhitespaceChar(character) || next.includes(character)) {
 				continue;
 			}
 			next.push(character);
