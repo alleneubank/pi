@@ -18,7 +18,7 @@ cd "$ROOT"
 PUBLISH=false
 [[ "${1:-}" == "--publish" ]] && PUBLISH=true
 
-BASE="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1 | sed 's/^v//')"
+BASE="$(git tag --list 'v*' --sort=-v:refname --format='%(refname:short)' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's/^v//')"
 VERSION="${BASE}-fork.$(date -u +%Y%m%d).g$(git rev-parse --short=9 HEAD)"
 TAG="v${VERSION}"
 
