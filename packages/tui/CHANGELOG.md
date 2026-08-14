@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Mid-prompt skill autocomplete: a slash-led token at a word boundary on the first line (e.g. `use /skil`) fuzzy-completes `skill:` commands, inserting a reference the model resolves on demand. Action commands stay line-start-only. `Enter` accepts the highlighted completion in place; `Tab` also accepts.
+
 ## [0.85.1] - 2026-09-05
 
 ### Added
