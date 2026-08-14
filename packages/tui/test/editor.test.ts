@@ -2838,6 +2838,8 @@ describe("Editor component", () => {
 			editor.handleInput("/");
 			editor.handleInput("h");
 			editor.handleInput("e");
+			// Slash tokens are debounced (20ms) like @ attachments
+			await new Promise((resolve) => setTimeout(resolve, 50));
 			await flushAutocomplete();
 			assert.strictEqual(editor.isShowingAutocomplete(), true);
 
@@ -4148,5 +4150,128 @@ describe("Editor component", () => {
 
 			assert.strictEqual(submitted, pastedText);
 		});
+	});
+});
+
+describe("mid-prompt slash command autocomplete", () => {
+	const commands = [
+		{ name: "model", description: "Switch models" }, // action: not a skill
+		{ name: "skill:git-commit", description: "Create a git commit" },
+		{ name: "skill:write-plan", description: "Write a plan" },
+	];
+
+	function createEditorWithCommands(): Editor {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setAutocompleteProvider(new CombinedAutocompleteProvider(commands, "/tmp"));
+		return editor;
+	}
+
+	async function waitForDebouncedAutocomplete(): Promise<void> {
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		await flushAutocomplete();
+	}
+
+	it("opens the command list when typing a slash token mid-prompt", async () => {
+		const editor = createEditorWithCommands();
+		for (const ch of "use /skil") editor.handleInput(ch);
+		await waitForDebouncedAutocomplete();
+		assert.strictEqual(editor.isShowingAutocomplete(), true);
+	});
+
+	it("opens the full command list for a bare slash at a word boundary", async () => {
+		const editor = createEditorWithCommands();
+		for (const ch of "use /") editor.handleInput(ch);
+		await waitForDebouncedAutocomplete();
+		assert.strictEqual(editor.isShowingAutocomplete(), true);
+	});
+
+	it("refines the list while typing more of the token", async () => {
+		const editor = createEditorWithCommands();
+		for (const ch of "use /skill:gi") editor.handleInput(ch);
+		await waitForDebouncedAutocomplete();
+		assert.strictEqual(editor.isShowingAutocomplete(), true);
+	});
+
+	it("does not open when the slash is not at a word boundary", async () => {
+		const editor = createEditorWithCommands();
+		for (const ch of "use/skil") editor.handleInput(ch);
+		await waitForDebouncedAutocomplete();
+		assert.strictEqual(editor.isShowingAutocomplete(), false);
+	});
+
+	it("closes the list when the token stops matching commands", async () => {
+		const editor = createEditorWithCommands();
+		for (const ch of "use /zzz") editor.handleInput(ch);
+		await waitForDebouncedAutocomplete();
+		assert.strictEqual(editor.isShowingAutocomplete(), false);
+	});
+
+	it("does not open for action commands mid-prompt", async () => {
+		const editor = createEditorWithCommands();
+		// "model" is an action command: excluded from the mid-prompt palette.
+		for (const ch of "use /mo") editor.handleInput(ch);
+		await waitForDebouncedAutocomplete();
+		assert.strictEqual(editor.isShowingAutocomplete(), false);
+	});
+
+	it("still opens for line-start slash commands", async () => {
+		const editor = createEditorWithCommands();
+		for (const ch of "/skil") editor.handleInput(ch);
+		await waitForDebouncedAutocomplete();
+		assert.strictEqual(editor.isShowingAutocomplete(), true);
+	});
+
+	it("does not open on the second line of a multi-line prompt", async () => {
+		const editor = createEditorWithCommands();
+		for (const ch of "hello\n/skil") editor.handleInput(ch);
+		await waitForDebouncedAutocomplete();
+		assert.strictEqual(editor.isShowingAutocomplete(), false);
+	});
+
+	it("applies a mid-prompt completion on Enter in place without submitting", async () => {
+		const editor = createEditorWithCommands();
+		let submitted = false;
+		editor.onSubmit = () => {
+			submitted = true;
+		};
+
+		for (const ch of "use /skil") editor.handleInput(ch);
+		await waitForDebouncedAutocomplete();
+		assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+		editor.handleInput("\r"); // Accept the highlighted completion
+		assert.strictEqual(editor.getText(), "use /skill:git-commit");
+		assert.strictEqual(editor.isShowingAutocomplete(), false);
+		assert.strictEqual(submitted, false);
+	});
+
+	it("accepts a mid-prompt completion on Tab without submitting", async () => {
+		const editor = createEditorWithCommands();
+		let submitted = false;
+		editor.onSubmit = () => {
+			submitted = true;
+		};
+
+		for (const ch of "use /skil") editor.handleInput(ch);
+		await waitForDebouncedAutocomplete();
+		assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+		editor.handleInput("\t");
+		assert.strictEqual(editor.getText(), "use /skill:git-commit");
+		assert.strictEqual(editor.isShowingAutocomplete(), false);
+		assert.strictEqual(submitted, false);
+	});
+
+	it("closes the list when backspacing past the slash token", async () => {
+		const editor = createEditorWithCommands();
+		for (const ch of "use /skil") editor.handleInput(ch);
+		await waitForDebouncedAutocomplete();
+		assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+		// Delete "skil/" -> "use ": no slash token remains, list must close.
+		for (let i = 0; i < 5; i += 1) editor.handleInput("\x7f");
+		await flushAutocomplete();
+		assert.strictEqual(editor.getText(), "use ");
+		assert.strictEqual(editor.isShowingAutocomplete(), false);
 	});
 });

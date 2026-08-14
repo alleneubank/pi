@@ -275,6 +275,9 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	private basePath: string;
 	private fdPath: string | null;
 
+	/** Slash tokens trigger this provider at word boundaries (like @ and #). */
+	triggerCharacters = ["/"];
+
 	constructor(commands: (SlashCommand | AutocompleteItem)[] = [], basePath: string, fdPath: string | null = null) {
 		this.commands = commands;
 		this.basePath = basePath;
@@ -305,28 +308,15 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			};
 		}
 
-		if (!options.force && textBeforeCursor.startsWith("/")) {
+		// Slash commands are a first-line feature (mirroring the editor's
+		// isSlashMenuAllowed gate); later lines never show the command menu.
+		if (!options.force && textBeforeCursor.startsWith("/") && cursorLine === 0) {
 			const spaceIndex = textBeforeCursor.indexOf(" ");
 
 			if (spaceIndex === -1) {
+				// No space yet - complete command names with fuzzy matching
 				const prefix = textBeforeCursor.slice(1);
-				const commandItems = this.commands.map((cmd) => {
-					const name = "name" in cmd ? cmd.name : cmd.value;
-					const hint = "argumentHint" in cmd && cmd.argumentHint ? cmd.argumentHint : undefined;
-					const desc = cmd.description ?? "";
-					const fullDesc = hint ? (desc ? `${hint} — ${desc}` : hint) : desc;
-					return {
-						name,
-						label: name,
-						description: fullDesc || undefined,
-					};
-				});
-
-				const filtered = fuzzyFilter(commandItems, prefix, (item) => item.name).map((item) => ({
-					value: item.name,
-					label: item.label,
-					...(item.description && { description: item.description }),
-				}));
+				const filtered = this.filterCommandItems(prefix);
 
 				if (filtered.length === 0) return null;
 
@@ -356,6 +346,28 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				items: argumentSuggestions,
 				prefix: argumentText,
 			};
+		}
+
+		// Mid-prompt slash commands: a slash-led token at a word boundary on the
+		// first line (e.g. the "/skil" in "use /skil"). Only skill commands are
+		// offered mid-prompt — they expand to a reference the model resolves on
+		// demand; action commands stay line-start only. When no skill matches,
+		// fall through to the path branch so absolute paths keep working. Skipped
+		// for forced (Tab) requests, which stay path completion.
+		if (cursorLine === 0 && !options.force) {
+			const inlineToken = this.extractInlineSlashToken(textBeforeCursor);
+			if (inlineToken) {
+				const filtered = this.filterCommandItems(
+					inlineToken.slice(1),
+					(cmd) => "name" in cmd && cmd.name.startsWith("skill:"),
+				);
+				if (filtered.length > 0) {
+					return {
+						items: filtered,
+						prefix: inlineToken,
+					};
+				}
+			}
 		}
 
 		const pathMatch = this.extractPathPrefix(textBeforeCursor, options.force ?? false);
@@ -424,8 +436,25 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			};
 		}
 
-		// Check if we're in a slash command context (beforePrefix contains "/command ")
+		// Slash-token completion not at line start: a mid-prompt command, a
+		// mid-prompt path fall-through, or a line-start command argument.
+		// Command items carry no leading "/" and get one; path and argument
+		// items already carry the full replacement (so no double slash).
 		const textBeforeCursor = currentLine.slice(0, cursorCol);
+		if (prefix.startsWith("/") && beforePrefix.trim() !== "") {
+			const value = item.value.startsWith("/") ? item.value : `/${item.value}`;
+			const newLine = `${beforePrefix}${value}${adjustedAfterCursor}`;
+			const newLines = [...lines];
+			newLines[cursorLine] = newLine;
+
+			return {
+				lines: newLines,
+				cursorLine,
+				cursorCol: beforePrefix.length + value.length,
+			};
+		}
+
+		// Check if we're in a slash command context (beforePrefix contains "/command ")
 		if (textBeforeCursor.includes("/") && textBeforeCursor.includes(" ")) {
 			// This is likely a command argument completion
 			const newLine = beforePrefix + item.value + adjustedAfterCursor;
@@ -457,6 +486,55 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			cursorLine,
 			cursorCol: beforePrefix.length + cursorOffset,
 		};
+	}
+
+	// Extract a slash-led token at a word boundary (start of line or after
+	// whitespace) that is NOT at the absolute start of the line, e.g. the
+	// "/skil" in "use /skil". Returns null when the token is at line start
+	// (handled by the line-start branch), not slash-led, or not at a word
+	// boundary. A bare "/" at a boundary returns "/" so the full command
+	// list is offered, matching line-start behavior.
+	private extractInlineSlashToken(text: string): string | null {
+		const lastSlash = text.lastIndexOf("/");
+		if (lastSlash <= 0) return null;
+		const prev = text[lastSlash - 1];
+		if (prev !== " " && prev !== "\t") return null;
+		const token = text.slice(lastSlash);
+		// Bare token only: no whitespace inside
+		if (token.includes(" ")) return null;
+		return token;
+	}
+
+	private getCommandItems(source: (SlashCommand | AutocompleteItem)[] = this.commands): Array<{
+		name: string;
+		label: string;
+		description?: string;
+	}> {
+		return source.map((cmd) => {
+			const name = "name" in cmd ? cmd.name : cmd.value;
+			const hint = "argumentHint" in cmd && cmd.argumentHint ? cmd.argumentHint : undefined;
+			const description = cmd.description ?? "";
+			const fullDescription = hint ? (description ? `${hint} — ${description}` : hint) : description;
+			return {
+				name,
+				label: name,
+				description: fullDescription || undefined,
+			};
+		});
+	}
+
+	// `skill:`-namespaced commands are the only mid-prompt palette; action
+	// commands stay line-start only. The predicate defaults to the full list.
+	private filterCommandItems(
+		prefix: string,
+		isIncluded?: (cmd: SlashCommand | AutocompleteItem) => boolean,
+	): AutocompleteItem[] {
+		const source = isIncluded ? this.commands.filter(isIncluded) : this.commands;
+		return fuzzyFilter(this.getCommandItems(source), prefix, (item) => item.name).map((item) => ({
+			value: item.name,
+			label: item.label,
+			...(item.description && { description: item.description }),
+		}));
 	}
 
 	// Extract @ prefix for fuzzy file suggestions
@@ -492,14 +570,11 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		}
 
 		// For natural triggers, return if it looks like a path, ends with /, starts with ~/, .
-		// Only return empty string if the text looks like it's starting a path context
+		// An empty prefix after a space yields nothing naturally: the user has no
+		// path token to complete, and an open menu (e.g. after deleting the "/"
+		// of a slash command) should close rather than show root-directory files.
+		// Forced (Tab) extraction already returned above.
 		if (pathPrefix.includes("/") || pathPrefix.startsWith(".") || pathPrefix.startsWith("~/")) {
-			return pathPrefix;
-		}
-
-		// Return empty string only after a space (not for completely empty text)
-		// Empty text should not trigger file suggestions - that's for forced Tab completion
-		if (pathPrefix === "" && text.endsWith(" ")) {
 			return pathPrefix;
 		}
 
