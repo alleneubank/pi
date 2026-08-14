@@ -34,7 +34,13 @@ mkdir -p "$DIST/stage-darwin-arm64" "$DIST/stage-linux-x64" "$DIST/binaries"
 scripts/build-binaries.sh --skip-install --platform darwin-arm64 --out "$DIST/stage-darwin-arm64"
 scripts/build-binaries.sh --skip-install --skip-deps --skip-build --platform linux-x64 --out "$DIST/stage-linux-x64"
 
-cp "$DIST"/stage-*/pi-*.tar.gz "$DIST/binaries/"
+# Re-tar the extracted platform dirs WITHOUT the pi/ wrapper: binary + assets at
+# the archive root, matching the flattened layout the other forks (hunk, grok)
+# use — mise's github backend shims exe= at the tarball root, and a wrapper dir
+# collides with the exe name.
+for platform in darwin-arm64 linux-x64; do
+	tar -czf "$DIST/binaries/pi-$platform.tar.gz" -C "$DIST/stage-$platform/$platform" .
+done
 ( cd "$DIST/binaries" && shasum -a 256 pi-*.tar.gz | sed 's/  /  /' > checksums.txt )
 
 # Required-platform gate: never publish a host-only release.
