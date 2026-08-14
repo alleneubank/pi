@@ -17,6 +17,18 @@ and nothing else.
 The test is simple: *would this commit go in an upstream PR?* yes → no tag;
 no → `[fork]`.
 
+Commit-type discipline — keep `main` reading as a clean `feat` sequence:
+
+- **Amend, don't accrete.** Iterating on an unmerged feature (review feedback,
+  dogfood fixes, rebase resolution) rewrites the existing `feat` commit with
+  `git commit --amend` / a history rewrite — never stack `fix:` commits for your
+  own work-in-progress.
+- **`fix` is for a real patch to upstream** — a genuine defect in already-merged
+  upstream code — not for iterating on your own unreviewed feature.
+- **`main` is mostly `feat`.** New capability → `feat`; a real upstream bug fix
+  → `fix`; everything else (release plumbing, fork docs) is `[fork]` on the
+  `fork` branch.
+
 ## Rebasing onto upstream
 
 Sync the fork the same way you would any feature branch, from the repo root:
