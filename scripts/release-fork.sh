@@ -34,6 +34,15 @@ mkdir -p "$DIST/stage-darwin-arm64" "$DIST/stage-linux-x64" "$DIST/binaries"
 scripts/build-binaries.sh --skip-install --platform darwin-arm64 --out "$DIST/stage-darwin-arm64"
 scripts/build-binaries.sh --skip-install --skip-deps --skip-build --platform linux-x64 --out "$DIST/stage-linux-x64"
 
+# Stamp the fork version into the package.json that ships beside each binary.
+# config.ts reads it at runtime (getPackageDir() = dirname(execPath) for the
+# compiled binary), so pi --version reports the fork tag, not the upstream
+# semver. Source-tree package.json is untouched — the tree stays clean.
+for platform in darwin-arm64 linux-x64; do
+	node -e "const fs=require('fs');const p=process.argv[1];const j=JSON.parse(fs.readFileSync(p,'utf8'));j.version=process.argv[2];fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')" \
+		"$DIST/stage-$platform/$platform/package.json" "$VERSION"
+done
+
 # Re-tar the extracted platform dirs WITHOUT the pi/ wrapper: binary + assets at
 # the archive root, matching the flattened layout the other forks (hunk, grok)
 # use — mise's github backend shims exe= at the tarball root, and a wrapper dir
