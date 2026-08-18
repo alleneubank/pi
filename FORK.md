@@ -1,23 +1,41 @@
 # Fork: alleneubank/pi
 
-This fork carries two kinds of commits, distinguished by the `[fork]` tag. The
-tag exists so `git diff upstream/main..main` is precisely the upstream PR set
-and nothing else.
+A personal fork of [earendil-works/pi](https://github.com/earendil-works/pi)
+(the upstream, tracked as the `origin` remote here), consumed via mise's
+`github:` backend and Nix overlays from GitHub release tarballs. Releasing a
+fork means reproducing the upstream release shape so existing tooling — mise
+`exe=`, overlay `fetchurl`, update scripts — consumes it without modification.
+
+Remotes: `origin` = upstream (`earendil-works/pi`), `fork` = this fork
+(`alleneubank/pi`).
+
+## One default branch
+
+Everything lives on `main`: unmarked upstream-bound feats and `[fork]`-tagged
+fork-only commits together. There is no second branch. The `[fork]` marker is
+what keeps `git diff origin/main..main` from being the upstream PR set — not a
+branch boundary.
+
+- **Cut release tags from `main`.** The default branch is the dogfood tip.
+- **Upstreamable work is a small branch against `origin/main`**, cherry-picking
+  only the unmarked feat commits. Never open an upstream PR from `main` as-is,
+  and never let a `[fork]` commit or a source edit made for build config leak
+  into that branch.
 
 ## Commit tagging
 
-- **Upstream-bound commits carry no tag.** Anything that belongs in a PR to
-  `earendil-works/pi` — feature code, tests, changelog — is committed on `main`
-  with a conventional subject (`feat(tui): ...`), no `[fork]` marker.
-- **Fork-only commits are tagged `[fork]`.** Distribution plumbing and this
-  fork's own standing law — the release script, fork docs, `SPEC.md`, the
-  `.hunk/` review ignore — live on the `fork` branch and are tagged `[fork]`
-  so they are visibly not upstream material.
+Two commit kinds on `main`, distinguished by a `[fork]` prefix:
 
-The test is simple: *would this commit go in an upstream PR?* yes → no tag;
-no → `[fork]`.
+- **Upstream-bound commits carry no tag.** Feature code, tests, changelog — a
+  conventional subject (`feat(tui): ...`), no marker.
+- **Fork-only commits are tagged `[fork]`.** Distribution plumbing and the
+  fork's own standing law — `scripts/release-fork.sh`, `FORK.md`, `SPEC.md`,
+  the `.hunk/` review ignore — are `[fork]` commits on `main` with everything
+  else.
 
-Commit-type discipline — keep `main` reading as a clean `feat` sequence:
+The test: *would this commit go in an upstream PR?* yes → no tag; no → `[fork]`.
+
+Commit-type discipline:
 
 - **Amend, don't accrete.** Iterating on an unmerged feature (review feedback,
   dogfood fixes, rebase resolution) rewrites the existing `feat` commit with
@@ -26,56 +44,78 @@ Commit-type discipline — keep `main` reading as a clean `feat` sequence:
 - **`fix` is for a real patch to upstream** — a genuine defect in already-merged
   upstream code — not for iterating on your own unreviewed feature.
 - **`main` is mostly `feat`.** New capability → `feat`; a real upstream bug fix
-  → `fix`; everything else (release plumbing, fork docs) is `[fork]` on the
-  `fork` branch.
+  → `fix`; everything else (release plumbing, fork docs) is `[fork]`.
 
-## Rebasing onto upstream
+## Sync loop
 
-Sync the fork the same way you would any feature branch, from the repo root:
+Maintaining the fork is a repeatable loop an agent can run unattended, from the
+repo root:
 
-```bash
-git checkout main
-git fetch origin
-git tag -a "main-rebase-backup-$(date +%Y%m%d-%H%M%S)" -m "pre-rebase backup" HEAD
-git rebase --update-refs origin/main
-```
-
-- Resolve conflicts only in files this fork changed; a conflict in an untouched
-  file means abort and ask.
-- Replay the `fork` branch onto the new `main` so the release machinery tracks
-  the clean tip:
-  ```bash
-  git checkout fork
-  git rebase --onto main <old-main-tip> fork
-  ```
-- Push with `--force-with-lease` (the fork is single-author):
-  ```bash
-  git push fork main:main --force-with-lease
-  git push fork fork:fork --force-with-lease
-  ```
+1. **Back up and rebase.**
+   ```bash
+   git checkout main
+   git fetch origin
+   git tag -a "main-rebase-backup-$(date +%Y%m%d-%H%M%S)" -m "pre-rebase backup" HEAD
+   git rebase --update-refs origin/main
+   ```
+   Resolve conflicts only in files the fork changed; a conflict in an untouched
+   file means abort and report, not guess.
+2. **Push with `--force-with-lease`** (single-author fork; never plain `--force`):
+   ```bash
+   git push fork main:main --force-with-lease
+   ```
+3. **Cut the release** from `main` with `scripts/release-fork.sh` (dry-run first;
+   `--publish` is the boundary), then bump the pinned version, `mise lock`,
+   `mise install`.
+4. **Offer upstream** from a small branch:
+   ```bash
+   git switch -c feat/<name> origin/main
+   # cherry-pick only the unmarked feat commits
+   ```
+   PR that branch against upstream. Never let a `[fork]` commit or a build-config
+   source edit into it.
 
 ## Releasing
 
-`scripts/release-fork.sh` builds the binaries and cuts a prerelease. See that
-script for the mechanics; the contract is:
+`scripts/release-fork.sh` builds the binaries and cuts a prerelease. The
+contract:
 
-- **Version scheme** `<base>-fork.<date>.g<sha>` — `<base>` is the nearest
-  plain upstream tag (`vX.Y.Z`, never another fork tag), `<date>` is
+- **Version scheme** `<base>-fork.<date>.g<sha>` — `<base>` is the nearest plain
+  upstream tag (`vX.Y.Z`, never another fork tag), `<date>` is
   `date -u +%Y%m%d`, and `g<sha>` pins the fork commit. It is a valid SemVer
   prerelease, so GitHub's `/releases/latest` never serves it and consumers pin
-  the exact tag.
+  the exact tag. `<base>` is filtered to plain tags, not `git describe` — once
+  `-fork` tags accumulate, `git describe --tags --abbrev=0` matches them too and
+  the version doubles.
 - **Prerelease is the isolation mechanism.** Tag with `gh release --prerelease`.
 - **Flattened tarballs** — `pi-<platform>.tar.gz` with the `pi` binary at the
-  archive root (no wrapper dir), plus a `checksums.txt`. `exe="pi"` in mise's
-  `github:` backend must resolve to a file, not a directory.
-- **Linux is required.** The minimum matrix is darwin/arm64 (dogfood) plus
-  linux/x64 (fleet); the script refuses to publish without the linux archive.
-- **Version is stamped, not source-edited.** `config.ts` reads `package.json`
-  from beside the binary at runtime, so the script rewrites the `version` field
-  of the shipped `package.json` to the fork version before archiving — the
-  source tree is never dirtied and `pi --version` reports the fork tag.
+  archive root (no wrapper dir), plus a `checksums.txt` in `sha256sum` format
+  (generated with `shasum -a 256`; `sha256sum` is not on macOS by default).
+  `exe="pi"` in mise's `github:` backend must resolve to a file, not a directory.
+- **Linux is required — never ship host-only.** The minimum matrix is
+  darwin/arm64 (dogfood) plus linux/x64 (fleet); the script refuses to publish
+  without the linux archive. Host-only collapses `mise lock` to one platform and
+  leaves Linux hosts with a 404.
+- **Version is stamped, not source-edited.** For Bun-compiled binaries the
+  runtime reads `package.json` from beside the executable; the script rewrites
+  the `version` field of the shipped `package.json` before archiving, so
+  `pi --version` reports the fork tag while the source tree stays clean.
 - **Dry-run by default; `--publish` is the boundary.** Tag push + `gh release`
   are the deliberate publish.
 
-Consumption: pin the exact tag in mise (`github:alleneubank/pi`), then
-`mise lock --global -p macos-arm64,linux-x64` and `mise install`.
+## Consumption
+
+Pin the exact tag in mise (`github:alleneubank/pi`, `exe = "pi"`), then
+`mise lock --global -p macos-arm64,linux-x64` and `mise install`. Keep the fork
+out of any competing manager — a stray `npm:`/brew shim precedes `~/.local/bin`
+on PATH and shadows it.
+
+Nix overlay consumers point their overlay's update script at this repo
+(repo-targeting) and pin `pi-<platform>.tar.gz` + sha256 per platform.
+
+## Publishing is the boundary
+
+The release script builds and packages freely, but tag push + `gh release` is a
+deliberate human action — dry-run by default, gate the publish behind
+`--publish`, restate the concrete tag + repo before publishing, and refuse to
+release from a dirty tree so the tag always reproduces the artifact.
