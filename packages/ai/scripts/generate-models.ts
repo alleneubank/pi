@@ -242,6 +242,24 @@ const ZAI_GLM52_THINKING_LEVEL_MAP = {
 	high: "high",
 	max: "max",
 } as const;
+// GLM-5.3 always reasons (the API rejects `thinking.type: "disabled"`) and exposes
+// low/high/max effort levels. https://docs.z.ai/guides/llm/glm-5.3
+const ZAI_GLM53_THINKING_LEVEL_MAP = {
+	off: null,
+	minimal: null,
+	low: "low",
+	medium: null,
+	high: "high",
+	max: "max",
+} as const;
+// GLM Coding Plan is subscription-backed, so models.dev reports zero cost for
+// coding-plan models. Use the equivalent Z.AI standard API rates to estimate the
+// value of subscription usage for models models.dev has not yet listed under the
+// standard `zai` provider (https://docs.z.ai/guides/overview/pricing).
+const ZAI_CODING_IMPLIED_COSTS: Record<string, ModelCost> = {
+	"glm-5.3": { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
+	"glm-5.2-highspeed": { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
+};
 const OPENCODE_GO_GLM52_THINKING_LEVEL_MAP = {
 	off: null,
 	minimal: null,
@@ -1697,8 +1715,14 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				if (m.tool_call !== true) continue;
 				const supportsImage = m.modalities?.input?.includes("image");
 
-				const isGlm52 = modelId === "glm-5.2";
+				const zaiThinkingLevelMap =
+					modelId === "glm-5.3"
+						? ZAI_GLM53_THINKING_LEVEL_MAP
+						: modelId === "glm-5.2" || modelId === "glm-5.2-highspeed"
+							? ZAI_GLM52_THINKING_LEVEL_MAP
+							: undefined;
 				const referenceCost = data.zai?.models[modelId]?.cost ?? m.cost;
+				const impliedCost = ZAI_CODING_IMPLIED_COSTS[modelId];
 
 				models.push({
 					id: modelId,
@@ -1707,18 +1731,18 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					provider,
 					baseUrl,
 					reasoning: m.reasoning === true,
-					...(isGlm52 ? { thinkingLevelMap: ZAI_GLM52_THINKING_LEVEL_MAP } : {}),
+					...(zaiThinkingLevelMap ? { thinkingLevelMap: zaiThinkingLevelMap } : {}),
 					input: supportsImage ? ["text", "image"] : ["text"],
 					cost: {
-						input: referenceCost?.input || 0,
-						output: referenceCost?.output || 0,
-						cacheRead: referenceCost?.cache_read || 0,
-						cacheWrite: referenceCost?.cache_write || 0,
+						input: referenceCost?.input || impliedCost?.input || 0,
+						output: referenceCost?.output || impliedCost?.output || 0,
+						cacheRead: referenceCost?.cache_read || impliedCost?.cacheRead || 0,
+						cacheWrite: referenceCost?.cache_write || impliedCost?.cacheWrite || 0,
 					},
 					compat: {
 						supportsDeveloperRole: false,
 						thinkingFormat: "zai",
-						...(isGlm52 ? { supportsReasoningEffort: true } : {}),
+						...(zaiThinkingLevelMap ? { supportsReasoningEffort: true } : {}),
 						...(!ZAI_TOOL_STREAM_UNSUPPORTED_MODELS.has(modelId) ? { zaiToolStream: true } : {}),
 					},
 					contextWindow: m.limit?.context || 4096,
