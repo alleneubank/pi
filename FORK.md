@@ -82,12 +82,19 @@ contract:
 
 - **Version scheme** `<base>-fork.<date>.g<sha>` — `<base>` is the nearest plain
   upstream tag (`vX.Y.Z`, never another fork tag), `<date>` is
-  `date -u +%Y%m%d`, and `g<sha>` pins the fork commit. It is a valid SemVer
-  prerelease, so GitHub's `/releases/latest` never serves it and consumers pin
-  the exact tag. `<base>` is filtered to plain tags, not `git describe` — once
+  `date -u +%Y%m%d`, and `g<sha>` pins the fork commit. The `-fork` suffix makes
+  it a SemVer prerelease, so the tag sorts before the base release
+  (`0.84.2-fork.X` < `0.84.2` < `0.84.3`) and can never be mistaken for the
+  upstream release it builds on. `<base>` is filtered to plain tags, not
+  `git describe` — once
   `-fork` tags accumulate, `git describe --tags --abbrev=0` matches them too and
   the version doubles.
-- **Prerelease is the isolation mechanism.** Tag with `gh release --prerelease`.
+- **The GitHub prerelease flag hides the fork from `latest`.** Tag with
+  `gh release --prerelease` — GitHub's `/releases/latest` and mise's default
+  `latest`/`ls-remote` skip it. This is distinct from the `-fork` SemVer suffix
+  above (that is version *sorting*). It is a choice, not a law: mise opts in
+  per tool with `prerelease = true`. The fork pins exact tags instead for fleet
+  reproducibility, not to avoid hijacking a separate-repo upstream.
 - **Flattened tarballs** — `pi-<platform>.tar.gz` with the `pi` binary at the
   archive root (no wrapper dir), plus a `checksums.txt` in `sha256sum` format
   (generated with `shasum -a 256`; `sha256sum` is not on macOS by default).
