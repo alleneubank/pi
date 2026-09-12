@@ -10,6 +10,8 @@
 ### Fixed
 
 - Fixed idle prompt-cache warming rebuilding expired caches when its timer or an extension decision is delayed.
+- Fixed fork prereleases on the latest upstream base from showing a false update notification; notices now appear only when upstream advances past the fork's base.
+- Fixed the startup changelog reappearing every launch when the last-seen version carries a prerelease/build suffix (e.g. `0.85.1-fork.20260910.g678734131`); the version parser now reads only the leading `major.minor.patch`.
 
 ## [0.86.1] - 2026-09-20
 
