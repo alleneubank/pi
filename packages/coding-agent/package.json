@@ -16,6 +16,10 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
+		"./system-prompt": {
+			"types": "./dist/core/system-prompt.d.ts",
+			"import": "./dist/core/system-prompt.js"
+		},
 		"./rpc-entry": {
 			"import": "./dist/bundle/rpc-entry.js"
 		},
