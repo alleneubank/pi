@@ -48,6 +48,19 @@ export function isNewerPackageVersion(candidateVersion: string, currentVersion: 
 	return candidateVersion.trim() !== currentVersion.trim();
 }
 
+/**
+ * A fork release is `<base>-fork.<date>.g<sha>` — a SemVer prerelease that
+ * sorts below its base (`0.84.2-fork… < 0.84.2`). Comparing the full prerelease
+ * against the upstream latest would report a false "update available" whenever
+ * the fork sits on the newest base. Compare against the embedded base instead,
+ * so the check fires only when upstream moves past the base the fork was cut
+ * from. Non-fork versions pass through unchanged.
+ */
+function stripForkVersionSuffix(version: string): string {
+	const index = version.indexOf("-fork.");
+	return index === -1 ? version : version.slice(0, index);
+}
+
 export async function getLatestPiRelease(
 	currentVersion: string,
 	options: { timeoutMs?: number; retry?: boolean } = {},
@@ -99,7 +112,7 @@ export async function checkForNewPiVersion(currentVersion: string): Promise<Late
 
 	try {
 		const latestRelease = await getLatestPiRelease(currentVersion);
-		if (latestRelease && isNewerPackageVersion(latestRelease.version, currentVersion)) {
+		if (latestRelease && isNewerPackageVersion(latestRelease.version, stripForkVersionSuffix(currentVersion))) {
 			return latestRelease;
 		}
 		return undefined;

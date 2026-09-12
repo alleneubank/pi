@@ -177,17 +177,29 @@ export function compareVersions(v1: ChangelogEntry, v2: ChangelogEntry): number 
 }
 
 /**
+ * Parse the leading `major.minor.patch` from a version string, ignoring any
+ * prerelease or build suffix such as `0.85.1-fork.20260910.g678734131`.
+ * A plain `split(".")` misreads those suffixes: `Number("1-fork")` is `NaN`,
+ * which falls back to patch `0` and makes an already-seen version look new.
+ */
+function parseVersionTriplet(version: string): { major: number; minor: number; patch: number } {
+	const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
+	if (!match) {
+		return { major: 0, minor: 0, patch: 0 };
+	}
+
+	return {
+		major: Number.parseInt(match[1], 10),
+		minor: Number.parseInt(match[2], 10),
+		patch: Number.parseInt(match[3], 10),
+	};
+}
+
+/**
  * Get entries newer than lastVersion
  */
 export function getNewEntries(entries: ChangelogEntry[], lastVersion: string): ChangelogEntry[] {
-	// Parse lastVersion
-	const parts = lastVersion.split(".").map(Number);
-	const last: ChangelogEntry = {
-		major: parts[0] || 0,
-		minor: parts[1] || 0,
-		patch: parts[2] || 0,
-		content: "",
-	};
+	const last: ChangelogEntry = { ...parseVersionTriplet(lastVersion), content: "" };
 
 	return entries.filter((entry) => compareVersions(entry, last) > 0);
 }

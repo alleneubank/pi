@@ -42,6 +42,20 @@ describe("version checks", () => {
 		await expect(checkForNewPiVersion("1.2.2")).resolves.toEqual({ version: "1.2.3" });
 	});
 
+	it("does not report an update when a fork sits on the newest base", async () => {
+		const fetchMock = vi.fn(async () => Response.json({ version: "0.84.2" }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(checkForNewPiVersion("0.84.2-fork.20260818.ge9b584095")).resolves.toBeUndefined();
+	});
+
+	it("reports an update when upstream passes the fork's base", async () => {
+		const fetchMock = vi.fn(async () => Response.json({ version: "0.85.0" }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(checkForNewPiVersion("0.84.2-fork.20260818.ge9b584095")).resolves.toEqual({ version: "0.85.0" });
+	});
+
 	it("uses the pi.dev version check api with a pi user agent", async () => {
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
 		vi.stubGlobal("fetch", fetchMock);
