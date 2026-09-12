@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+#
+# Fork release for alleneubank/pi: build the pi binaries and cut a prerelease
+# tarball set consumed via mise's github: backend and Nix overlays.
+#
+# Mirrors the upstream archive layout (pi-<platform>.tar.gz) produced by
+# scripts/build-binaries.sh. Minimum fleet matrix: darwin/arm64 (dogfood host)
+# plus linux/x64 (required — never ship host-only).
+#
+# Dry-run by default; the tag push + gh release are the deliberate publish,
+# gated behind --publish.
+set -euo pipefail
+
+REPO="alleneubank/pi"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+PUBLISH=false
+[[ "${1:-}" == "--publish" ]] && PUBLISH=true
+
+BASE="$(git tag --list 'v*' --sort=-v:refname --format='%(refname:short)' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's/^v//')"
+VERSION="${BASE}-fork.$(date -u +%Y%m%d).g$(git rev-parse --short=9 HEAD)"
+TAG="v${VERSION}"
+
+# Refuse a dirty tree so the tag always reproduces the artifact.
+[[ -z "$(git status --porcelain)" ]] || { echo "dirty tree — commit or stash first" >&2; exit 1; }
+
+DIST="$ROOT/dist/fork-release"
+rm -rf "$DIST"
+mkdir -p "$DIST/stage-darwin-arm64" "$DIST/stage-linux-x64" "$DIST/binaries"
+
+# Build packages + the darwin binary first, then compile only the linux binary
+# (packages are already built; upstream no longer materializes cross-platform
+# clipboard bindings — native prebuilds are committed under packages/tui/native).
+scripts/build-binaries.sh --skip-install --offline-model-data --platform darwin-arm64 --out "$DIST/stage-darwin-arm64"
+scripts/build-binaries.sh --skip-install --skip-build --platform linux-x64 --out "$DIST/stage-linux-x64"
+
+# Stamp the fork version into the package.json that ships beside each binary.
+# config.ts reads it at runtime (getPackageDir() = dirname(execPath) for the
+# compiled binary), so pi --version reports the fork tag, not the upstream
+# semver. Source-tree package.json is untouched — the tree stays clean.
+for platform in darwin-arm64 linux-x64; do
+	node -e "const fs=require('fs');const p=process.argv[1];const j=JSON.parse(fs.readFileSync(p,'utf8'));j.version=process.argv[2];fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')" \
+		"$DIST/stage-$platform/$platform/package.json" "$VERSION"
+
+	# Local prompt captures and other ignored resources are not release inputs.
+	# Replace the build script's recursive copies with the committed sources.
+	for directory in docs examples; do
+		rm -rf "$DIST/stage-$platform/$platform/$directory"
+		mkdir -p "$DIST/stage-$platform/$platform/$directory"
+		git archive HEAD:"packages/coding-agent/$directory" \
+			| tar -x -C "$DIST/stage-$platform/$platform/$directory"
+	done
+done
+
+# Re-tar the extracted platform dirs WITHOUT the pi/ wrapper: binary + assets at
+# the archive root, matching the flattened layout the other forks (hunk, grok)
+# use — mise's github backend shims exe= at the tarball root, and a wrapper dir
+# collides with the exe name. Assert each binary's platform identity first: a
+# mislabeled archive (a Mac binary under a linux name) silently breaks the fleet.
+for platform in darwin-arm64 linux-x64; do
+	case "$platform" in
+		darwin-arm64) expected="Mach-O.*arm64" ;;
+		linux-x64) expected="ELF.*x86-64" ;;
+	esac
+	actual="$(file -b "$DIST/stage-$platform/$platform/pi")"
+	[[ "$actual" =~ $expected ]] || { echo "platform mismatch for pi-$platform: $actual" >&2; exit 1; }
+	COPYFILE_DISABLE=1 tar -czf "$DIST/binaries/pi-$platform.tar.gz" -C "$DIST/stage-$platform/$platform" .
+
+	# Fail the release if an archive contains local captures or omits committed resources.
+	diff -u \
+		<(git ls-tree -r --name-only HEAD:packages/coding-agent | grep -E '^(docs|examples)/' | LC_ALL=C sort) \
+		<(tar -tzf "$DIST/binaries/pi-$platform.tar.gz" | sed 's@^\./@@' | grep -E '^(docs|examples)/' | grep -v '/$' | LC_ALL=C sort)
+done
+( cd "$DIST/binaries" && shasum -a 256 pi-*.tar.gz | sed 's/  /  /' > checksums.txt )
+
+# Required-platform gate: never publish a host-only release.
+ls "$DIST/binaries"/pi-*linux*.tar.gz >/dev/null 2>&1 \
+	|| { echo "missing required linux archive — fleet cannot install" >&2; exit 1; }
+
+if [[ "$PUBLISH" != true ]]; then
+	echo "dry run — re-run with --publish to cut the release"
+	echo "version: $VERSION"
+	ls -lh "$DIST/binaries"
+	exit 0
+fi
+
+# BOUNDARY: deliberate publish only.
+git tag -a "$TAG" -m "fork release $VERSION"
+git push fork "$TAG"
+gh release create "$TAG" --repo "$REPO" --prerelease --title "$VERSION" \
+	"$DIST/binaries"/pi-*.tar.gz "$DIST/binaries"/checksums.txt
