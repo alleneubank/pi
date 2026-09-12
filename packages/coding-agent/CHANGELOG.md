@@ -5,6 +5,7 @@
 ### Added
 
 - Added mid-prompt skill autocomplete for slash-led `skill:` references on later lines; `Enter` or `Tab` accepts them without submitting the prompt.
+- Exported `buildSystemPrompt` from the package root and the lightweight `@earendil-works/pi-coding-agent/system-prompt` subpath.
 
 ### Fixed
 
