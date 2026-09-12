@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added mid-prompt skill autocomplete for slash-led `skill:` references on later lines; `Enter` or `Tab` accepts them without submitting the prompt.
+
 ## [0.87.0] - 2026-09-21
 
 ### New Features
