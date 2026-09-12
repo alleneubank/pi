@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -31,17 +31,24 @@ function createFixture(t, { importUndeclared = false } = {}) {
 			type: "module",
 			main: "./dist/index.js",
 			types: "./dist/index.d.ts",
-			exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } },
+			exports: {
+				".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
+				"./system-prompt": { types: "./dist/core/system-prompt.d.ts", import: "./dist/core/system-prompt.js" },
+			},
 			files: ["dist"],
 			bin: { pi: "dist/bundle/cli.js" },
 		},
 		{
 			"dist/index.js": `${importUndeclared ? 'import "@earendil-works/undeclared";' : ""}
+export { buildSystemPrompt } from "./core/system-prompt.js";
 export function createAgentSession() {}
 export class SessionManager { static inMemory() {} }
 export class ModelRuntime { static create() {} }
 `,
 			"dist/index.d.ts": "export {};\n",
+			"dist/core/system-prompt.js": `export function buildSystemPrompt({ customPrompt, cwd }) {
+  return customPrompt + "\\nCurrent working directory: " + cwd + "\\n";
+}`,
 			"dist/cli.js": 'console.log("1.0.0");\n',
 			"dist/bundle/cli.js": 'console.log("1.0.0");\n',
 		},
@@ -60,4 +67,13 @@ test("accepts a valid coding-agent package", (t) => {
 test("fails when the SDK imports an undeclared package despite a working CLI", (t) => {
 	const directory = createFixture(t, { importUndeclared: true });
 	assert.throws(() => smokeTestCodingAgent(directory), /Cannot find package '@earendil-works\/undeclared'/);
+});
+
+test("fails when the system-prompt subpath is missing from the packed package", (t) => {
+	const directory = createFixture(t);
+	const path = join(directory, "node_modules", codingAgentName, "package.json");
+	const manifest = JSON.parse(readFileSync(path, "utf8"));
+	delete manifest.exports["./system-prompt"];
+	writeFileSync(path, JSON.stringify(manifest));
+	assert.throws(() => smokeTestCodingAgent(directory), /Package subpath '\.\/system-prompt' is not defined/);
 });
