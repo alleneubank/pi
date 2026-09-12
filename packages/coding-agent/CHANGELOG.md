@@ -21,6 +21,8 @@
 - Fixed direct RPC `steer` and `follow_up` commands bypassing extension `input` handlers ([#8718](https://github.com/earendil-works/pi/issues/8718)).
 - Fixed premature missing-model errors after login by waiting for catalog discovery. Radius now defaults to `balanced`, falling back to the first available Radius model when needed.
 - Fixed fullscreen mode reserving a blank row for custom footers that render zero rows ([#8919](https://github.com/earendil-works/pi/issues/8919)).
+- Fixed fork prereleases on the latest upstream base from showing a false update notification; notices now appear only when upstream advances past the fork's base.
+- Fixed the startup changelog reappearing every launch when the last-seen version carries a prerelease/build suffix (e.g. `0.85.1-fork.20260910.g678734131`); the version parser now reads only the leading `major.minor.patch`.
 - Fixed extension tools without parameter schemas to be rejected during registration instead of breaking provider requests ([#9300](https://github.com/earendil-works/pi/issues/9300)).
 
 ## [0.85.1] - 2026-09-05
