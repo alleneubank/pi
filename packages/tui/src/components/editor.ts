@@ -790,11 +790,17 @@ export class Editor implements Component, Focusable {
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
 
-					if (this.autocompletePrefix.startsWith("/")) {
-						this.cancelAutocomplete();
+					// First-line command completions accept and submit on Enter.
+					// Embedded references, including later-line starts, keep editing.
+					const currentLine = this.state.lines[this.state.cursorLine] || "";
+					const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
+					const isMessageStartCommandCompletion =
+						this.autocompletePrefix.startsWith("/") && this.isInSlashCommandContext(textBeforeCursor);
+
+					this.cancelAutocomplete();
+					if (isMessageStartCommandCompletion) {
 						// Fall through to submit
 					} else {
-						this.cancelAutocomplete();
 						if (this.onChange) this.onChange(this.getText());
 						return;
 					}
@@ -2174,7 +2180,7 @@ export class Editor implements Component, Focusable {
 		);
 	}
 
-	// Slash menu only allowed on the first line of the editor
+	// Command invocations are first-line only; provider-triggered references are not.
 	private isSlashMenuAllowed(): boolean {
 		return this.state.cursorLine === 0;
 	}
@@ -2329,7 +2335,7 @@ export class Editor implements Component, Focusable {
 	private setAutocompleteTriggerCharacters(triggerCharacters: string[]): void {
 		const next = [...DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS];
 		for (const character of triggerCharacters) {
-			if (character.length !== 1 || character === "/" || isWhitespaceChar(character) || next.includes(character)) {
+			if (character.length !== 1 || isWhitespaceChar(character) || next.includes(character)) {
 				continue;
 			}
 			next.push(character);

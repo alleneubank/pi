@@ -576,3 +576,276 @@ describe("CombinedAutocompleteProvider", () => {
 		});
 	});
 });
+
+describe("mid-prompt slash command completion", () => {
+	const commands = [
+		{ name: "model", description: "Switch models" }, // action: not a skill
+		{ name: "import", description: "Import a session" }, // action: not a skill
+		{ name: "skill:git-commit", description: "Create a git commit" },
+		{ name: "skill:write-plan", description: "Write a plan" },
+	];
+	const signal = new AbortController().signal;
+
+	it("declares / as a trigger character", () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+		assert.deepStrictEqual(provider.triggerCharacters, ["/"]);
+	});
+
+	it("suggests commands for a slash token in the middle of a prompt", async () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+		const line = "use /skil";
+		const result = await provider.getSuggestions([line], 0, line.length, { signal });
+
+		assert.notEqual(result, null, "Should return command suggestions");
+		assert.strictEqual(result?.prefix, "/skil", "Prefix should be the slash token");
+		const values = result?.items.map((item) => item.value);
+		assert.ok(values?.includes("skill:git-commit"));
+		assert.ok(values?.includes("skill:write-plan"));
+		assert.ok(!values?.includes("model"));
+	});
+
+	it("offers only skill commands for a bare slash at a word boundary", async () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+		const line = "use /";
+		const result = await provider.getSuggestions([line], 0, line.length, { signal });
+
+		assert.notEqual(result, null, "Should return the skill command list");
+		assert.strictEqual(result?.prefix, "/");
+		const values = result?.items.map((item) => item.value) ?? [];
+		assert.ok(values.includes("skill:git-commit"));
+		assert.ok(values.includes("skill:write-plan"));
+		assert.ok(!values.includes("model"), "Action commands must not appear mid-prompt");
+		assert.ok(!values.includes("import"));
+	});
+
+	it("excludes action commands from the mid-prompt palette", async () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+		// "model" is an action command, not a skill: no command suggestions, no
+		// path named /mo exists, so nothing.
+		const line = "use /mo";
+		const result = await provider.getSuggestions([line], 0, line.length, { signal });
+
+		const values = result?.items.map((item) => item.value) ?? [];
+		assert.ok(!values.includes("model"), "Action commands must not appear mid-prompt");
+	});
+
+	it("does not suggest commands when the slash is not at a word boundary", async () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+		const line = "use/skil";
+		const result = await provider.getSuggestions([line], 0, line.length, { signal });
+
+		const values = result?.items.map((item) => item.value) ?? [];
+		assert.ok(
+			!values.includes("model") && !values.includes("skill:git-commit"),
+			"Should not return command items for a slash mid-word",
+		);
+	});
+
+	it("falls through to path completion when no command matches", async () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+		// "/usr/b" matches no command; it should never yield command items.
+		const line = "use /usr/b";
+		const result = await provider.getSuggestions([line], 0, line.length, { signal });
+
+		const values = result?.items.map((item) => item.value) ?? [];
+		assert.ok(
+			!values.includes("model") && !values.includes("skill:git-commit"),
+			"Should not return command items for a path-like token",
+		);
+	});
+
+	it("returns nothing for a trailing space with no slash token", async () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+		// After deleting the "/" from "use /skil", the text is "use ": no
+		// slash token remains, so no suggestions should be offered (the
+		// trailing space must not fall through to root-directory files).
+		const line = "use ";
+		const result = await provider.getSuggestions([line], 0, line.length, { signal });
+
+		assert.strictEqual(result, null);
+	});
+
+	it("does not hijack a line-start command argument that starts with /", async () => {
+		const provider = new CombinedAutocompleteProvider(
+			[
+				{
+					name: "export",
+					getArgumentCompletions: () => [{ value: "/tmp/out.html", label: "/tmp/out.html" }],
+				},
+			],
+			"/tmp",
+		);
+		const line = "/export /tmp/o";
+		const result = await provider.getSuggestions([line], 0, line.length, { signal });
+
+		assert.notEqual(result, null);
+		assert.strictEqual(result?.prefix, "/tmp/o", "Should complete the argument, not the command");
+		assert.strictEqual(result?.items[0]?.value, "/tmp/out.html");
+
+		const applied = provider.applyCompletion([line], 0, line.length, result!.items[0]!, result!.prefix);
+		assert.strictEqual(applied.lines[0], "/export /tmp/out.html", "Should not prepend an extra slash");
+	});
+
+	for (const line of ["/", "  /", "use /", "\t/"]) {
+		it(`offers only skills on later lines at ${JSON.stringify(line)}`, async () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const result = await provider.getSuggestions(["context", "", line], 2, line.length, { signal });
+
+			assert.strictEqual(result?.prefix, "/");
+			assert.deepStrictEqual(
+				result?.items.map((item) => item.value),
+				["skill:git-commit", "skill:write-plan"],
+			);
+		});
+	}
+
+	for (const line of ["/git", "  /git", "use /git"]) {
+		it(`inserts a later-line skill reference in place at ${JSON.stringify(line)}`, async () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const lines = ["context", `${line} then`, "after"];
+			const result = await provider.getSuggestions(lines, 1, line.length, { signal });
+			assert.ok(result);
+			assert.strictEqual(result.prefix, "/git");
+			assert.deepStrictEqual(
+				result.items.map((item) => item.value),
+				["skill:git-commit"],
+			);
+
+			const applied = provider.applyCompletion(lines, 1, line.length, result.items[0]!, result.prefix);
+			const leading = line.slice(0, -4);
+			assert.deepStrictEqual(applied.lines, ["context", `${leading}/skill:git-commit then`, "after"]);
+			assert.strictEqual(applied.cursorLine, 1);
+			assert.strictEqual(applied.cursorCol, leading.length + 17);
+			assert.deepStrictEqual(lines, ["context", `${line} then`, "after"]);
+		});
+	}
+
+	it("keeps action argument completers out of later-line skill tokens", async () => {
+		const provider = new CombinedAutocompleteProvider(
+			[
+				...commands,
+				{ name: "export", getArgumentCompletions: () => [{ value: "report.html", label: "report.html" }] },
+			],
+			"/tmp",
+		);
+		const line = "/export /git";
+		const result = await provider.getSuggestions(["context", line], 1, line.length, { signal });
+		assert.deepStrictEqual(
+			result?.items.map((item) => item.value),
+			["skill:git-commit"],
+		);
+	});
+
+	it("preserves later-line absolute paths when no skill matches, including forced completion", async () => {
+		const baseDir = mkdtempSync(join(tmpdir(), "pi-slash-path-"));
+		try {
+			writeFileSync(join(baseDir, "report.txt"), "report");
+			const provider = new CombinedAutocompleteProvider(commands, baseDir);
+			const line = `${baseDir}/rep`;
+			for (const force of [false, true]) {
+				const result = await provider.getSuggestions(["context", line], 1, line.length, { signal, force });
+				assert.ok(result);
+				assert.deepStrictEqual(
+					result.items.map((item) => item.value),
+					[`${baseDir}/report.txt`],
+				);
+				const applied = provider.applyCompletion(
+					["context", line],
+					1,
+					line.length,
+					result.items[0]!,
+					result.prefix,
+				);
+				assert.deepStrictEqual(applied.lines, ["context", `${baseDir}/report.txt`]);
+			}
+		} finally {
+			rmSync(baseDir, { recursive: true, force: true });
+		}
+	});
+
+	for (const line of ["use/git", "/git\t", "/git "]) {
+		it(`does not offer later-line skills outside a bare slash token at ${JSON.stringify(line)}`, async () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const result = await provider.getSuggestions(["context", line], 1, line.length, { signal });
+			assert.ok(!result?.items.some((item) => item.value.startsWith("skill:")));
+		});
+	}
+
+	it("keeps the full command list at line start", async () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+		const line = "/mo";
+		const result = await provider.getSuggestions([line], 0, line.length, { signal });
+
+		assert.notEqual(result, null);
+		assert.ok(
+			result?.items.some((item) => item.value === "model"),
+			"Actions stay available at line start",
+		);
+	});
+
+	it("keeps line-start slash command behavior", async () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+		const line = "/skil";
+		const result = await provider.getSuggestions([line], 0, line.length, { signal });
+
+		assert.strictEqual(result?.prefix, "/skil");
+		assert.ok(result?.items.some((item) => item.value === "skill:git-commit"));
+	});
+
+	it("applies mid-prompt completion in place without trailing space", async () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+		const line = "use /skil";
+		const result = await provider.getSuggestions([line], 0, line.length, { signal });
+		assert.notEqual(result, null);
+
+		const item = result!.items.find((entry) => entry.value === "skill:git-commit");
+		assert.ok(item, "Should find the skill suggestion");
+		const applied = provider.applyCompletion([line], 0, line.length, item!, result!.prefix);
+
+		assert.strictEqual(applied.lines[0], "use /skill:git-commit");
+		assert.strictEqual(applied.cursorCol, "use /skill:git-commit".length);
+	});
+
+	it("keeps line-start completion trailing space", async () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+		const line = "/skil";
+		const result = await provider.getSuggestions([line], 0, line.length, { signal });
+		assert.notEqual(result, null);
+
+		const item = result!.items.find((entry) => entry.value === "skill:git-commit");
+		assert.ok(item, "Should find the skill suggestion");
+		const applied = provider.applyCompletion([line], 0, line.length, item!, result!.prefix);
+
+		assert.strictEqual(applied.lines[0], "/skill:git-commit ");
+	});
+
+	it("applies mid-prompt completion when cursor is mid-word", async () => {
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+		const line = "use /skil then";
+		const cursorCol = "use /skil".length;
+		const result = await provider.getSuggestions([line], 0, cursorCol, { signal });
+		assert.notEqual(result, null);
+
+		const item = result!.items.find((entry) => entry.value === "skill:git-commit");
+		assert.ok(item);
+		const applied = provider.applyCompletion([line], 0, cursorCol, item!, result!.prefix);
+
+		assert.strictEqual(applied.lines[0], "use /skill:git-commit then");
+	});
+
+	it("applies a mid-prompt path completion without a double slash", async () => {
+		// Regression: a slash token with no command match falls through to path
+		// completion; accepting it must not prepend a second "/" to the path.
+		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+		const line = "use /usr/bi";
+		const applied = provider.applyCompletion(
+			[line],
+			0,
+			line.length,
+			{ value: "/usr/bin/", label: "bin/" },
+			"/usr/bi",
+		);
+
+		assert.strictEqual(applied.lines[0], "use /usr/bin/");
+	});
+});
