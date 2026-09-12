@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Mid-prompt skill autocomplete: a slash-led token at a word boundary on any line (e.g. `use /skil`, or `/skil` below pasted context) fuzzy-completes `skill:` commands, inserting a reference the model resolves on demand. Action commands stay at the start of the first line. `Enter` accepts embedded references without submitting the prompt; `Tab` also accepts.
+
 ### Fixed
 
 - Fixed `Editor.addToHistory()` storing a prompt again when it was already in history; it now moves the existing entry to the most recent position ([#12279](https://github.com/earendil-works/pi/issues/12279))
