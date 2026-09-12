@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -39,6 +39,7 @@ function createFixture(t, { importServer = false, declareServer = false } = {}) 
 				exports: isAgent
 					? {
 						".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
+						"./system-prompt": { types: "./dist/core/system-prompt.d.ts", import: "./dist/core/system-prompt.js" },
 						"./client": { source: "./src/client/index.ts" },
 						"./experimental/plugin": { source: "./src/experimental/plugin.ts" },
 					}
@@ -55,6 +56,7 @@ function createFixture(t, { importServer = false, declareServer = false } = {}) 
 			{
 				"dist/index.js": isAgent
 					? `${importServer ? 'import "@earendil-works/pi-server";' : ""}
+export { buildSystemPrompt } from "./core/system-prompt.js";
 export function createAgentSession() {}
 export class SessionManager { static inMemory() {} }
 export class ModelRuntime { static create() {} }
@@ -63,6 +65,9 @@ export class ModelRuntime { static create() {} }
 				"dist/index.d.ts": "export {};\n",
 				...(isAgent
 					? {
+						"dist/core/system-prompt.js": `export function buildSystemPrompt({ customPrompt, cwd }) {
+  return customPrompt + "\\nCurrent working directory: " + cwd + "\\n";
+}`,
 						"dist/cli.js": 'console.log("1.0.0");\n',
 						"dist/bundle/cli.js": 'console.log("1.0.0");\n',
 					}
@@ -95,6 +100,15 @@ test("accepts a valid coding-agent package and rejects development-only packages
 test("fails when the SDK imports an undeclared server despite a working CLI", (t) => {
 	const directory = createFixture(t, { importServer: true });
 	assert.throws(() => smokeTestCodingAgent(directory), /Cannot find package '@earendil-works\/pi-server'/);
+});
+
+test("fails when the system-prompt subpath is missing from the packed package", (t) => {
+	const directory = createFixture(t);
+	const path = join(directory, "node_modules", codingAgentName, "package.json");
+	const manifest = JSON.parse(readFileSync(path, "utf8"));
+	delete manifest.exports["./system-prompt"];
+	writeFileSync(path, JSON.stringify(manifest));
+	assert.throws(() => smokeTestCodingAgent(directory), /Package subpath '\.\/system-prompt' is not defined/);
 });
 
 test("fails if a development-only dependency is added back to the published dependency tree", (t) => {
