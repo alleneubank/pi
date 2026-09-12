@@ -41,7 +41,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.0
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -155,7 +155,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          runtime_platform="$(node -p '`${process.platform}-${process.arch}`')"
+          runtime_platform="$(node -p 'process.platform + "-" + process.arch')"
           case "${runtime_platform}" in
             darwin-arm64|darwin-x64|linux-arm64|linux-x64)
               platform="${runtime_platform}"
@@ -183,10 +183,12 @@ jobs:
 
           mkdir -p extracted
           if [[ "${archive}" == *.zip ]]; then
-            export ARCHIVE_PATH="$(cygpath -w "${archive}")"
-            export DESTINATION_PATH="$(cygpath -w extracted)"
-            powershell.exe -NoProfile -NonInteractive -Command \
-              'Expand-Archive -LiteralPath $env:ARCHIVE_PATH -DestinationPath $env:DESTINATION_PATH -Force'
+            ARCHIVE_PATH="$(cygpath -w "${archive}")"
+            DESTINATION_PATH="$(cygpath -w extracted)"
+            export ARCHIVE_PATH DESTINATION_PATH
+            powershell.exe -NoProfile -NonInteractive -Command - <<'POWERSHELL'
+          Expand-Archive -LiteralPath $env:ARCHIVE_PATH -DestinationPath $env:DESTINATION_PATH -Force
+          POWERSHELL
           else
             tar -xf "${archive}" -C extracted
           fi
@@ -321,7 +323,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
-          sudo ln -s $(which fdfind) /usr/local/bin/fd
+          sudo ln -s "$(command -v fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
