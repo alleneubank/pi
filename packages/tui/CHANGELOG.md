@@ -5,6 +5,7 @@
 ### Added
 
 - Added `Box.setPaddingX(...)` and `Text.setPaddingX(...)` ([#10557](https://github.com/earendil-works/pi/pull/10557) by [@rwachtler](https://github.com/rwachtler))
+- Mid-prompt skill autocomplete: a slash-led token at a word boundary on any line (e.g. `use /skil`, or `/skil` below pasted context) fuzzy-completes `skill:` commands, inserting a reference the model resolves on demand. Action commands stay at the start of the first line. `Enter` accepts embedded references without submitting the prompt; `Tab` also accepts.
 
 ## [1.0.4] - 2026-10-05
 
