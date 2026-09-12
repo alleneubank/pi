@@ -7,6 +7,12 @@
 - Added mid-prompt skill autocomplete for slash-led `skill:` references on later lines; `Enter` or `Tab` accepts them without submitting the prompt.
 - Exported `buildSystemPrompt` from the package root and the lightweight `@earendil-works/pi-coding-agent/system-prompt` subpath.
 
+### Fixed
+
+- Fixed fork prereleases on the latest upstream base from showing a false update notification; notices now appear only when upstream advances past the fork's base.
+- Fixed the startup changelog reappearing every launch when the last-seen version carries a prerelease/build suffix (e.g. `0.85.1-fork.20260910.g678734131`); the version parser now reads only the leading `major.minor.patch`.
+
+
 ## [0.87.0] - 2026-09-21
 
 ### New Features
