@@ -101,7 +101,11 @@ export function smokeTestCodingAgentConsumer(directory, runtime = process.execPa
 	}
 	try {
 		writeFileSync(entry, `import assert from "node:assert/strict";
-import { createAgentSession, SessionManager, ModelRuntime } from "${codingAgentName}";
+import { buildSystemPrompt, createAgentSession, SessionManager, ModelRuntime } from "${codingAgentName}";
+import { buildSystemPrompt as renderSystemPrompt } from "${codingAgentName}/system-prompt";
+for (const render of [buildSystemPrompt, renderSystemPrompt]) {
+  assert.equal(render({ customPrompt: "Consumer prompt", cwd: "/consumer" }), "Consumer prompt\\nCurrent working directory: /consumer\\n");
+}
 assert.equal(typeof createAgentSession, "function");
 assert.equal(typeof SessionManager.inMemory, "function");
 assert.equal(typeof ModelRuntime.create, "function");

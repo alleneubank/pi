@@ -23,6 +23,7 @@ function createFixture(t, { importServer = false, declareServer = false } = {}) 
 			type: "module",
 			exports: isAgent ? {
 				".": "./dist/index.js",
+				"./system-prompt": "./dist/core/system-prompt.js",
 				"./client": { source: "./src/client/index.ts" },
 				"./experimental/plugin": { source: "./src/experimental/plugin.ts" },
 			} : "./dist/index.js",
@@ -41,11 +42,15 @@ function createFixture(t, { importServer = false, declareServer = false } = {}) 
 ${importServer ? 'import "@earendil-works/pi-server";' : ""}
 import { marker } from "@earendil-works/chord";
 if (marker !== "local tarball") throw new Error("Wrong Chord artifact");
+export { buildSystemPrompt } from "./core/system-prompt.js";
 export function createAgentSession() {}
 export class SessionManager { static inMemory() {} }
 export class ModelRuntime { static create() {} }
 ` : 'export const marker = "local tarball";',
 			...(isAgent ? {
+				"dist/core/system-prompt.js": `export function buildSystemPrompt({ customPrompt, cwd }) {
+  return customPrompt + "\\nCurrent working directory: " + cwd + "\\n";
+}`,
 				"dist/cli.js": 'console.log("1.0.0");',
 				"dist/bundle/cli.js": 'console.log("1.0.0");',
 			} : {}),
@@ -87,6 +92,15 @@ test("installs only coding-agent directly and uses overrides only for declared r
 test("fails when the SDK imports an undeclared server despite a working CLI", (t) => {
 	const directory = createFixture(t, { importServer: true });
 	assert.throws(() => smokeTestCodingAgentConsumer(directory), /Cannot find package '@earendil-works\/pi-server'/);
+});
+
+test("fails when the system-prompt subpath is missing from the packed package", (t) => {
+	const directory = createFixture(t);
+	const path = join(directory, "node_modules", codingAgentName, "package.json");
+	const manifest = JSON.parse(readFileSync(path, "utf8"));
+	delete manifest.exports["./system-prompt"];
+	writeFileSync(path, JSON.stringify(manifest));
+	assert.throws(() => smokeTestCodingAgentConsumer(directory), /Package subpath '\.\/system-prompt' is not defined/);
 });
 
 test("fails if a development-only dependency is added back to the published dependency tree", (t) => {
