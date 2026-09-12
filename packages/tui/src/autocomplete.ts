@@ -285,6 +285,9 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	private basePath: string;
 	private fdPath: string | null;
 
+	/** Slash tokens trigger this provider at word boundaries (like @ and #). */
+	triggerCharacters = ["/"];
+
 	constructor(commands: (SlashCommand | AutocompleteItem)[] = [], basePath: string, fdPath: string | null = null) {
 		this.commands = commands;
 		this.basePath = basePath;
@@ -315,32 +318,15 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			};
 		}
 
-		if (!options.force && textBeforeCursor.startsWith("/")) {
+		// The full command palette and argument completers belong only to
+		// invocations at the start of the message, not embedded skill references.
+		if (!options.force && textBeforeCursor.startsWith("/") && cursorLine === 0) {
 			const spaceIndex = textBeforeCursor.indexOf(" ");
 
 			if (spaceIndex === -1) {
+				// No space yet - complete command names with fuzzy matching
 				const prefix = textBeforeCursor.slice(1);
-				const commandItems = this.commands.map((cmd) => {
-					const name = "name" in cmd ? cmd.name : cmd.value;
-					const hint = "argumentHint" in cmd && cmd.argumentHint ? cmd.argumentHint : undefined;
-					const desc = cmd.description ?? "";
-					const fullDesc = hint ? (desc ? `${hint} — ${desc}` : hint) : desc;
-					return {
-						name,
-						label: name,
-						description: fullDesc || undefined,
-					};
-				});
-
-				const filtered = fuzzyFilter(commandItems, prefix, (item) =>
-					!prefix.startsWith("skill:") && item.name.startsWith("skill:")
-						? item.name.slice("skill:".length)
-						: item.name,
-				).map((item) => ({
-					value: item.name,
-					label: item.label,
-					...(item.description && { description: item.description }),
-				}));
+				const filtered = this.filterCommandItems(prefix);
 
 				if (filtered.length === 0) return null;
 
@@ -370,6 +356,26 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				items: argumentSuggestions,
 				prefix: argumentText,
 			};
+		}
+
+		// Elsewhere in the prompt, including later-line starts, only skills are
+		// offered: they insert references rather than executing commands. When
+		// none match, fall through so absolute paths keep working. Forced (Tab)
+		// requests stay path completion.
+		if (!options.force) {
+			const inlineToken = textBeforeCursor.match(/(?:^|[ \t])(\/[^\s/]*)$/)?.[1];
+			if (inlineToken) {
+				const filtered = this.filterCommandItems(
+					inlineToken.slice(1),
+					(cmd) => "name" in cmd && cmd.name.startsWith("skill:"),
+				);
+				if (filtered.length > 0) {
+					return {
+						items: filtered,
+						prefix: inlineToken,
+					};
+				}
+			}
 		}
 
 		const pathMatch = this.extractPathPrefix(textBeforeCursor, options.force ?? false);
@@ -402,9 +408,9 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		const adjustedAfterCursor =
 			isQuotedPrefix && hasTrailingQuoteInItem && hasLeadingQuoteAfterCursor ? afterCursor.slice(1) : afterCursor;
 
-		// Check if we're completing a slash command (prefix starts with "/" but NOT a file path)
-		// Slash commands are at the start of the line and don't contain path separators after the first /
-		const isSlashCommand = prefix.startsWith("/") && beforePrefix.trim() === "" && !prefix.slice(1).includes("/");
+		// Only first-line invocations get the trailing space for command arguments.
+		const isSlashCommand =
+			cursorLine === 0 && prefix.startsWith("/") && beforePrefix.trim() === "" && !prefix.slice(1).includes("/");
 		if (isSlashCommand) {
 			// This is a command name completion
 			const newLine = `${beforePrefix}/${item.value} ${adjustedAfterCursor}`;
@@ -438,8 +444,25 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			};
 		}
 
-		// Check if we're in a slash command context (beforePrefix contains "/command ")
+		// Slash-token completion outside a first-line invocation: an embedded
+		// skill reference, a path fall-through, or a command argument.
+		// Command items carry no leading "/" and get one; path and argument
+		// items already carry the full replacement (so no double slash).
 		const textBeforeCursor = currentLine.slice(0, cursorCol);
+		if (prefix.startsWith("/") && (cursorLine > 0 || beforePrefix.trim() !== "")) {
+			const value = item.value.startsWith("/") ? item.value : `/${item.value}`;
+			const newLine = `${beforePrefix}${value}${adjustedAfterCursor}`;
+			const newLines = [...lines];
+			newLines[cursorLine] = newLine;
+
+			return {
+				lines: newLines,
+				cursorLine,
+				cursorCol: beforePrefix.length + value.length,
+			};
+		}
+
+		// Check if we're in a slash command context (beforePrefix contains "/command ")
 		if (textBeforeCursor.includes("/") && textBeforeCursor.includes(" ")) {
 			// This is likely a command argument completion
 			const newLine = beforePrefix + item.value + adjustedAfterCursor;
@@ -471,6 +494,52 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			cursorLine,
 			cursorCol: beforePrefix.length + cursorOffset,
 		};
+	}
+
+	private getCommandItems(source: (SlashCommand | AutocompleteItem)[] = this.commands): Array<{
+		name: string;
+		label: string;
+		description?: string;
+	}> {
+		return source.map((cmd) => {
+			const name = "name" in cmd ? cmd.name : cmd.value;
+			const hint = "argumentHint" in cmd && cmd.argumentHint ? cmd.argumentHint : undefined;
+			const description = cmd.description ?? "";
+			const fullDescription = hint ? (description ? `${hint} — ${description}` : hint) : description;
+			return {
+				name,
+				label: name,
+				description: fullDescription || undefined,
+			};
+		});
+	}
+
+	// `skill:`-namespaced commands are the only mid-prompt palette; action
+	// commands stay line-start only. The predicate defaults to the full list.
+	private filterCommandItems(
+		prefix: string,
+		isIncluded?: (cmd: SlashCommand | AutocompleteItem) => boolean,
+	): AutocompleteItem[] {
+		const source = isIncluded ? this.commands.filter(isIncluded) : this.commands;
+		return fuzzyFilter(this.getCommandItems(source), prefix, (item) =>
+			this.skillAwareFilterText(prefix, item.name),
+		).map((item) => ({
+			value: item.name,
+			label: item.label,
+			...(item.description && { description: item.description }),
+		}));
+	}
+
+	// Rank `skill:` commands by bare name (`idea` → `skill:research-idea`) unless
+	// the query is itself a prefix of `skill:` or the full command (`skil`, `skill:git`).
+	private skillAwareFilterText(prefix: string, name: string): string {
+		if (!name.startsWith("skill:") || prefix.startsWith("skill:")) {
+			return name;
+		}
+		if ("skill:".startsWith(prefix) || name.startsWith(prefix)) {
+			return name;
+		}
+		return name.slice("skill:".length);
 	}
 
 	// Extract @ prefix for fuzzy file suggestions
@@ -506,14 +575,18 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		}
 
 		// For natural triggers, return if it looks like a path, ends with /, starts with ~/, .
-		// Only return empty string if the text looks like it's starting a path context
+		// An empty prefix after a space yields nothing naturally: the user has no
+		// path token to complete, and an open menu (e.g. after deleting the "/"
+		// of a slash command) should close rather than show root-directory files.
+		// Forced (Tab) extraction already returned above.
 		if (pathPrefix.includes("/") || pathPrefix.startsWith(".") || pathPrefix.startsWith("~/")) {
 			return pathPrefix;
 		}
 
-		// Return an empty prefix after whitespace or CJK punctuation, but not for empty text.
-		// Empty text should not trigger file suggestions - that's for forced Tab completion
-		if (pathPrefix === "" && text !== "" && tokenStartRegex.test(text)) {
+		// Empty prefix after CJK punctuation (and non-ASCII space) offers files.
+		// ASCII space/tab is how a deleted slash token looks, so do not dump cwd
+		// files there. Tab (forceExtract) already returned above.
+		if (pathPrefix === "" && text !== "" && tokenStartRegex.test(text) && !/[ \t]$/.test(text)) {
 			return pathPrefix;
 		}
 
