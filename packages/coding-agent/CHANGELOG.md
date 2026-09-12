@@ -5,6 +5,7 @@
 ### Added
 
 - Added a Models Configuration reference generated from the `models.json` schema, listing all provider, model, model override, and compatibility fields ([#10790](https://github.com/earendil-works/pi/issues/10790))
+- Added mid-prompt skill autocomplete for slash-led `skill:` references on later lines; `Enter` or `Tab` accepts them without submitting the prompt.
 
 ### Changed
 
