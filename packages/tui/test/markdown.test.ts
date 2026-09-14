@@ -1641,6 +1641,61 @@ bar`,
 			assert.ok(joinedPlain.includes("(mailto:test@example.com)"), "Should show mailto URL in parentheses");
 		});
 
+		for (const { href, expected } of [
+			{ href: "~/.handoffs/report.md", expected: "Evidence (~/.handoffs/report.md)" },
+			{ href: "/Users/allen/report.md", expected: "Evidence (/Users/allen/report.md)" },
+			{ href: "docs/report.md", expected: "Evidence (docs/report.md)" },
+			{ href: "../report.md", expected: "Evidence (../report.md)" },
+			{ href: "#results", expected: "Evidence (#results)" },
+			{ href: "//example.com/docs", expected: "Evidence (//example.com/docs)" },
+			{ href: "https://", expected: "Evidence (https://)" },
+			{ href: "https://[invalid", expected: "Evidence (https://[invalid)" },
+		]) {
+			it(`should display ${href} without a terminal hyperlink or link styling`, () => {
+				for (const hyperlinks of [true, false]) {
+					setCapabilities({ images: null, trueColor: false, hyperlinks });
+					const markdown = new Markdown(`[Evidence](${href})`, 0, 0, defaultMarkdownTheme);
+					const output = markdown.render(80).join("");
+
+					assert.ok(!output.includes("\x1b]8;"), "Should not emit a terminal hyperlink");
+					assert.ok(!output.includes("\x1b[4m"), "Should not underline an unresolved link");
+					assert.strictEqual(stripAnsi(output).trimEnd(), expected);
+				}
+			});
+		}
+
+		it("should show an unresolved destination only once when it is also the label", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown("[docs/report.md](docs/report.md)", 0, 0, defaultMarkdownTheme);
+			const output = markdown.render(80).join("");
+
+			assert.ok(!output.includes("\x1b]8;"));
+			assert.strictEqual(stripAnsi(output).trimEnd(), "docs/report.md");
+		});
+
+		it("should preserve an unresolved destination when wrapping", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown("[Evidence](~/.handoffs/report.md)", 0, 0, defaultMarkdownTheme);
+			const lines = markdown.render(24);
+
+			assert.ok(!lines.join("").includes("\x1b]8;"));
+			assert.deepStrictEqual(
+				lines.map((line) => stripAnsi(line).trimEnd()),
+				["Evidence", "(~/.handoffs/report.md)"],
+			);
+		});
+
+		for (const href of ["file:///tmp/report.md", "vscode://file/tmp/report.md:42", "custom+v1.2-test:report"]) {
+			it(`should preserve the explicit URL ${href}`, () => {
+				setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+				const markdown = new Markdown(`[Evidence](${href})`, 0, 0, defaultMarkdownTheme);
+				const output = markdown.render(80).join("");
+
+				assert.ok(output.includes(`\x1b]8;;${href}\x1b\\`));
+				assert.ok(!stripAnsi(output).includes(`(${href})`));
+			});
+		}
+
 		it("should emit OSC 8 hyperlink sequence when terminal supports hyperlinks", () => {
 			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
 			const markdown = new Markdown("[click here](https://example.com)", 0, 0, defaultMarkdownTheme);
