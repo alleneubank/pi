@@ -688,8 +688,10 @@ export class Markdown implements Component {
 
 				case "link": {
 					const linkText = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
-					const styledLink = this.theme.link(this.theme.underline(linkText));
-					if (getCapabilities().hyperlinks) {
+					// Relative destinations have no base URL in a terminal; keep them visible instead of guessing.
+					const hasScheme = /^[a-z][a-z0-9+.-]*:/i.test(token.href);
+					const styledLink = hasScheme ? this.theme.link(this.theme.underline(linkText)) : linkText;
+					if (getCapabilities().hyperlinks && hasScheme) {
 						// OSC 8: render as a clickable hyperlink. The URL is not printed inline,
 						// so we always show only the link text regardless of whether it matches href.
 						result += hyperlink(styledLink, token.href) + stylePrefix;
