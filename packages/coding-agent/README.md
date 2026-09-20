@@ -42,6 +42,7 @@ I regularly publish my own `pi-mono` work sessions here:
   - [Editor](#editor)
   - [Commands](#commands)
   - [Keyboard Shortcuts](#keyboard-shortcuts)
+  - [Background Processes](#background-processes)
   - [Message Queue](#message-queue)
 - [Sessions](#sessions)
   - [Branching](#branching)
@@ -167,7 +168,7 @@ The editor can be temporarily replaced by other UI, like built-in `/settings` or
 | Multi-line | Shift+Enter (or Ctrl+Enter on Windows Terminal) |
 | External editor | Ctrl+G opens `externalEditor`, `$VISUAL`, `$EDITOR`, Notepad on Windows, or `nano` elsewhere |
 | Clipboard | Ctrl+V to paste an image or text (Alt+V on Windows), or drag images onto terminal |
-| Bash commands | `!command` runs and sends output to LLM, `!!command` runs without sending |
+| Bash commands | `!command` runs and sends output to LLM, `!!command` runs without sending; Shift+Ctrl+B backgrounds the active command |
 
 Standard editing keybindings for delete word, undo, etc. See [docs/keybindings.md](docs/keybindings.md).
 
@@ -187,6 +188,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
 | `/session` | Show session info (file, ID, messages, tokens, cost) |
+| `/processes` | Show owned background Bash processes |
 | `/tree` | Jump to any point in the session and continue from there |
 | `/trust` | Save project trust decision for future sessions (restart required) |
 | `/fork` | Create a new session from a previous user message |
@@ -218,8 +220,19 @@ See `/hotkeys` for the full list. Customize via `~/.pi/agent/keybindings.json`. 
 | Ctrl+P / Shift+Ctrl+P | Cycle scoped models forward/backward |
 | Shift+Tab | Cycle thinking level |
 | Ctrl+O | Collapse/expand tool output |
+| Shift+Ctrl+B | Move the active Bash tool process to background |
 | Ctrl+T | Collapse/expand thinking blocks |
 | Ctrl+X | Copy the last assistant message; with fullscreen copy-on-select disabled, copy the active text selection |
+
+### Background Processes
+
+The model-callable `bash` tool can set `runInBackground` to return immediately. Otherwise, an unfinished local command moves to background after `yieldAfter` seconds (10 by default); set `yieldAfter` to `0` to keep it foreground. `timeout` remains a separate hard execution deadline. Shift+Ctrl+B transfers the active Bash tool process without restarting it.
+
+Bash returns the OS PID and a durable output path for a background command. Use ordinary Bash commands such as `ps` and `kill` to inspect or terminate it, and Read or Bash to inspect retained output. `/processes` shows the owned records in the chat without sending them to the model. While commands remain active, model requests receive a compact process list with no output. Each command emits one terminal notification with its PID, output path, and exit code or signal; the notification does not include the log. Quiet waiting makes no model requests.
+
+Background work belongs to the current runtime and session branch. `/reload` preserves it, while `/new`, `/resume`, `/fork`, quitting, or runtime disposal cancels it rather than transferring it. Aborting a response pauses automatic wake-ups without discarding pending evidence; the next explicit prompt reenables delivery.
+
+Print/JSON mode gives background Bash a five-second completion grace and then cancels remaining processes during shutdown. Processes do not survive quitting or restarting pi.
 
 ### Message Queue
 
@@ -544,7 +557,7 @@ Pi is aggressively extensible so it doesn't have to dictate your workflow. Featu
 
 **No built-in to-dos.** They confuse models. Use a TODO.md file, or build your own with [extensions](#extensions).
 
-**No background bash.** Use tmux. Full observability, direct interaction.
+**Runtime-local background processes.** Bash work can outlive a response and wake its owning conversation, but pi does not run a persistent task daemon. Use tmux or another supervisor for work that must survive quitting pi or needs direct terminal interaction.
 
 Read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) for the full rationale.
 
