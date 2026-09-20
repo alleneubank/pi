@@ -2,15 +2,24 @@
 
 ## [Unreleased]
 
+### New Features
+
+- **Runtime-local background processes** — Hand model Bash to the background with a PID, output path, and status path. Completion statuses are batched into the next already-scheduled model request without copying logs, starting a turn, or waking the conversation. `/processes` shows owned records to the human. See [Background processes](docs/usage.md#run-a-background-process).
+- **Mid-prompt skill autocomplete** — Complete and insert `/skill:name` references anywhere in a prompt without submitting it. See [Skills](docs/skills.md).
+- **System prompt inspection** — Render Pi's prompt through the public `buildSystemPrompt` API and use included examples to compare coding-agent prompts.
+
 ### Added
 
 - Added mid-prompt skill autocomplete for slash-led `skill:` references on later lines; `Enter` or `Tab` accepts them without submitting the prompt.
 - Exported `buildSystemPrompt` from the package root and the lightweight `@earendil-works/pi-coding-agent/system-prompt` subpath.
+- Added system-prompt inspection examples for rendering Pi prompts and capturing, extracting, and comparing other coding agents' prompts.
+- Added runtime-local background Bash processes with explicit backgrounding, PID, output-path, and status-path reporting, a human `/processes` view, process-tree cleanup, and a configurable Shift+Ctrl+B handoff for active model Bash. See [Background processes](docs/usage.md#run-a-background-process).
 
 ### Fixed
 
 - Fixed fork prereleases on the latest upstream base from showing a false update notification; notices now appear only when upstream advances past the fork's base.
 - Fixed the startup changelog reappearing every launch when the last-seen version carries a prerelease/build suffix (e.g. `0.85.1-fork.20260910.g678734131`); the version parser now reads only the leading `major.minor.patch`.
+- Fixed unresolved Markdown link destinations, including relative paths and fragments, disappearing behind unusable terminal hyperlinks; they now remain visible without invalid OSC 8 links.
 
 ## [0.87.1] - 2026-09-22
 
