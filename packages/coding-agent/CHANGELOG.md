@@ -7,10 +7,13 @@
 - Added `compat.supportsStrictMode` for `google-generative-ai` and `google-vertex` models in `models.json`, so Gemini 3+ models served under IDs without the version can use strict tools ([#12321](https://github.com/earendil-works/pi/issues/12321))
 - Added mid-prompt skill autocomplete for slash-led `skill:` references on later lines; `Enter` or `Tab` accepts them without submitting the prompt.
 - Exported `buildSystemPrompt` from the package root and the lightweight `@earendil-works/pi-coding-agent/system-prompt` subpath.
+- Added system-prompt inspection examples for rendering Pi prompts and capturing, extracting, and comparing other coding agents' prompts.
+- Added runtime-local background Bash processes with explicit backgrounding, PID, output-path, and status-path reporting, a human `/processes` view, process-tree cleanup, and a configurable Shift+Ctrl+B handoff for active model Bash. See [Background processes](docs/usage.md#run-a-background-process).
 
 ### Fixed
 
 - Fixed fork prereleases on the latest upstream base from showing a false update notification; notices now appear only when upstream advances past the fork's base.
+- Fixed unresolved Markdown link destinations, including relative paths and fragments, disappearing behind unusable terminal hyperlinks; they now remain visible without invalid OSC 8 links.
 - Fixed sessions with very many entries after the last compaction (about 120k or more) failing to load with `RangeError: Maximum call stack size exceeded` when building the context ([#12154](https://github.com/earendil-works/pi/issues/12154))
 - Fixed `ctx.ui.pasteToEditor()` and `ctx.ui.setEditorText()` not repainting the editor when called outside terminal input handling, such as after an `await` in a command handler ([#12295](https://github.com/earendil-works/pi/issues/12295))
 - Fixed the bash tool returning `(no output)` when the output ended with a line over 50KB followed by an empty line; it now shows the end of that line ([#12350](https://github.com/earendil-works/pi/issues/12350))

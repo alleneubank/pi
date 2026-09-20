@@ -424,6 +424,8 @@ Handlers run in extension load order, then registration order. Some events notif
 
 Notification handlers should not perform slow work on a streaming event. Transform handlers should preserve fields they do not intentionally own, and gate handlers should fail closed when their safety decision cannot be made.
 
+`message_end` can replace a finalized message while preserving its role. `tool_call` can mutate input or block execution. For the built-in `bash` tool, its input includes `command`, optional `timeout`, and optional `runInBackground`. `tool_result` handlers compose, with each handler seeing prior changes.
+
 ### Startup Events
 
 #### project_trust

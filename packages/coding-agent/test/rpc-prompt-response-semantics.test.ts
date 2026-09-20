@@ -17,7 +17,7 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
 import type * as Shell from "../src/utils/shell.ts";
-import { killTrackedDetachedChildren } from "../src/utils/shell.ts";
+import { getShellConfig, killTrackedDetachedChildren } from "../src/utils/shell.ts";
 import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.ts";
 
@@ -397,6 +397,36 @@ describe("RPC prompt response semantics", () => {
 					followUp: type === "follow_up" ? ["B"] : [],
 				});
 			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("does not start an RPC turn when a background process exits", async () => {
+		const { lineHandler, runtimeHost, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 0 });
+
+		try {
+			lineHandler(JSON.stringify({ id: "background-initial", type: "prompt", message: "Initialize" }));
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines).some((record) => record.type === "agent_end")).toBe(true);
+			});
+			rpcIo.outputLines = [];
+
+			const started = runtimeHost.session.processManager.start({
+				command: "printf rpc-background-complete",
+				cwd: process.cwd(),
+				env: process.env,
+				shellConfig: getShellConfig(),
+				owner: { sessionId: runtimeHost.session.sessionId, branchAnchorId: null },
+				backgroundReason: "explicit",
+			});
+			await runtimeHost.session.processManager.waitForExit(started.pid);
+
+			const events = parseOutputLines(rpcIo.outputLines);
+			expect(events.filter((record) => record.type === "agent_end" || record.type === "message_end")).toHaveLength(
+				0,
+			);
+			expect(rpcIo.outputLines.join("\n")).not.toContain("background-process");
 		} finally {
 			await cleanup();
 		}

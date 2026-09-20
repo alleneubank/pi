@@ -9,6 +9,7 @@
 ### Fixed
 
 - Fixed `Editor.addToHistory()` storing a prompt again when it was already in history; it now moves the existing entry to the most recent position ([#12279](https://github.com/earendil-works/pi/issues/12279))
+- Fixed unresolved Markdown link destinations, including relative paths and fragments, disappearing behind unusable terminal hyperlinks; they now remain visible without invalid OSC 8 links.
 
 ## [1.6.0] - 2026-11-20
 
