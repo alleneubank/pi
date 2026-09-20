@@ -107,6 +107,12 @@ import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import { type BashExecutionMessage, type CustomMessage, convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
+import {
+	DEFAULT_PROCESS_RECORD_LIMIT,
+	ProcessManager,
+	type ProcessManagerEvent,
+	type ProcessSnapshot,
+} from "./process-manager.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { exportSessionToJsonl } from "./session-export.ts";
@@ -313,6 +319,11 @@ interface ToolDefinitionEntry {
 	sourceInfo: SourceInfo;
 }
 
+const PROCESS_NOTIFICATION_QUEUE_LIMIT = DEFAULT_PROCESS_RECORD_LIMIT;
+const PROCESS_NOTIFICATION_COALESCE_MS = 50;
+const BACKGROUND_CONTEXT_COMMAND_BYTES = 512;
+const PRINT_BASH_GRACE_MS = 5_000;
+
 function estimateMessagesTokens(messages: AgentMessage[]): number {
 	let tokens = 0;
 	for (const message of messages) {
@@ -329,6 +340,7 @@ export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
 	readonly settingsManager: SettingsManager;
+	readonly processManager: ProcessManager;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 
@@ -339,6 +351,13 @@ export class AgentSession {
 	private _agentRunAbortRequested = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
+	private _pendingProcessEvents: ProcessManagerEvent[] = [];
+	private _processDeliveryTimer: NodeJS.Timeout | undefined;
+	private _processDeliveryPromise: Promise<void> | undefined;
+	private _processDeliveryInFlight = false;
+	private _processDeliveryPaused = false;
+	private _promptCallsInFlight = 0;
+	private _disposed = false;
 
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
 	private _steeringMessages: string[] = [];
@@ -413,6 +432,7 @@ export class AgentSession {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
+		this.processManager = new ProcessManager({ onEvent: (event) => this._queueProcessEvent(event) });
 		this._scopedModels = config.scopedModels ?? [];
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
@@ -834,6 +854,147 @@ export class AgentSession {
 		}
 	}
 
+	private _queueProcessEvent(event: ProcessManagerEvent): void {
+		if (this._disposed || event.owner.sessionId !== this.sessionId) return;
+		if (this._pendingProcessEvents.length >= PROCESS_NOTIFICATION_QUEUE_LIMIT) {
+			throw new Error(`Background notification queue limit reached (${PROCESS_NOTIFICATION_QUEUE_LIMIT})`);
+		}
+		this._pendingProcessEvents.push(event);
+		this._scheduleProcessDelivery();
+	}
+
+	private _scheduleProcessDelivery(delayMs = PROCESS_NOTIFICATION_COALESCE_MS): void {
+		if (
+			this._disposed ||
+			this._processDeliveryPaused ||
+			this._promptCallsInFlight > 0 ||
+			this._processDeliveryInFlight ||
+			this._processDeliveryTimer ||
+			this._pendingProcessEvents.length === 0
+		) {
+			return;
+		}
+		this._processDeliveryTimer = setTimeout(() => {
+			this._processDeliveryTimer = undefined;
+			void this._runProcessDelivery();
+		}, delayMs);
+	}
+
+	private _runProcessDelivery(): Promise<void> {
+		if (this._processDeliveryPromise) return this._processDeliveryPromise;
+		const delivery = this._flushProcessEvents();
+		this._processDeliveryPromise = delivery;
+		void delivery.then(
+			() => {
+				if (this._processDeliveryPromise === delivery) this._processDeliveryPromise = undefined;
+			},
+			() => {
+				if (this._processDeliveryPromise === delivery) this._processDeliveryPromise = undefined;
+			},
+		);
+		return delivery;
+	}
+
+	private _ownerBelongsToActiveBranch(owner: ProcessSnapshot["owner"]): boolean {
+		return (
+			owner.branchAnchorId === null ||
+			this.sessionManager.getBranch().some((entry) => entry.id === owner.branchAnchorId)
+		);
+	}
+
+	private _formatProcessEvent(event: ProcessManagerEvent): string {
+		const status = event.signal
+			? `Termination signal: ${event.signal}`
+			: event.exitCode !== undefined
+				? `Exit code: ${event.exitCode}`
+				: `State: ${event.state}`;
+		const parts = [
+			"[Background process finished]",
+			`PID: ${event.pid}`,
+			`Output: ${event.outputPath}`,
+			status,
+			`Final output:\n${event.output?.trimEnd() || "(no output)"}`,
+		];
+		if (event.diagnostics) parts.push(`Diagnostics:\n${event.diagnostics.trimEnd()}`);
+		if (event.error) parts.push(`Error: ${event.error}`);
+		return parts.join("\n");
+	}
+
+	private async _flushProcessEvents(): Promise<void> {
+		if (
+			this._disposed ||
+			this._processDeliveryPaused ||
+			this._promptCallsInFlight > 0 ||
+			this._processDeliveryInFlight
+		) {
+			return;
+		}
+		const selected: ProcessManagerEvent[] = [];
+		const held: ProcessManagerEvent[] = [];
+		for (const event of this._pendingProcessEvents) {
+			if (this._ownerBelongsToActiveBranch(event.owner)) selected.push(event);
+			else held.push(event);
+		}
+		if (selected.length === 0) return;
+		this._pendingProcessEvents = held;
+		this._processDeliveryInFlight = true;
+		let delivered = 0;
+		try {
+			for (const [index, event] of selected.entries()) {
+				await this.sendCustomMessage(
+					{
+						customType: "background-process",
+						content: this._formatProcessEvent(event),
+						display: true,
+						details: { sequence: event.sequence, pid: event.pid, outputPath: event.outputPath },
+					},
+					{ triggerTurn: index === selected.length - 1, deliverAs: "followUp" },
+				);
+				this.processManager.acknowledgeTerminalEvent(event.pid);
+				delivered++;
+			}
+		} catch {
+			this._pendingProcessEvents = [...selected.slice(delivered), ...this._pendingProcessEvents];
+		} finally {
+			this._processDeliveryInFlight = false;
+			this._scheduleProcessDelivery();
+		}
+	}
+
+	resumeBackgroundDelivery(): void {
+		this._processDeliveryPaused = false;
+		this._scheduleProcessDelivery(0);
+	}
+
+	get isBackgroundDeliveryPaused(): boolean {
+		return this._processDeliveryPaused;
+	}
+
+	backgroundForegroundBash(): number | undefined {
+		return this.processManager.backgroundForegroundBash();
+	}
+
+	private async _drainProcessEventsForExit(): Promise<void> {
+		while (!this._processDeliveryPaused) {
+			if (this._processDeliveryTimer) {
+				clearTimeout(this._processDeliveryTimer);
+				this._processDeliveryTimer = undefined;
+			}
+			if (this._processDeliveryPromise) {
+				await this._processDeliveryPromise;
+				continue;
+			}
+			if (!this._pendingProcessEvents.some((event) => this._ownerBelongsToActiveBranch(event.owner))) return;
+			await this._runProcessDelivery();
+			await this.waitForIdle();
+		}
+	}
+
+	async waitForBackgroundProcessesForExit(options?: { bashGraceMs?: number }): Promise<void> {
+		const completed = await this.processManager.waitForAll(options?.bashGraceMs ?? PRINT_BASH_GRACE_MS);
+		if (completed) await this._drainProcessEventsForExit();
+	}
+
 	private _emitQueueUpdate(): void {
 		this._emit({
 			type: "queue_update",
@@ -1168,6 +1329,12 @@ export class AgentSession {
 	 * Call this when completely done with the session.
 	 */
 	dispose(): void {
+		this._disposed = true;
+		if (this._processDeliveryTimer) {
+			clearTimeout(this._processDeliveryTimer);
+			this._processDeliveryTimer = undefined;
+		}
+		this.processManager.dispose();
 		try {
 			this.abortRetry();
 			this.abortCompaction();
@@ -1420,30 +1587,66 @@ export class AgentSession {
 		return sections ? { role: "system", content: "", sections, timestamp: Date.now() } : undefined;
 	}
 
+	private _backgroundProcessContextMessage(): CustomMessage | undefined {
+		const processes = this.processManager
+			.list()
+			.filter(
+				(process) =>
+					process.state === "running" &&
+					process.backgroundReason !== undefined &&
+					process.owner.sessionId === this.sessionId &&
+					this._ownerBelongsToActiveBranch(process.owner),
+			);
+		if (processes.length === 0) return undefined;
+
+		const lines = processes.map((process) => {
+			const commandBytes = Buffer.from(process.command, "utf8");
+			let command = process.command;
+			if (commandBytes.length > BACKGROUND_CONTEXT_COMMAND_BYTES) {
+				let end = BACKGROUND_CONTEXT_COMMAND_BYTES;
+				while (end > 0 && (commandBytes[end] & 0xc0) === 0x80) end--;
+				command = `${commandBytes.subarray(0, end).toString("utf8")}…`;
+			}
+			return JSON.stringify({
+				pid: process.pid,
+				command,
+				backgroundReason: process.backgroundReason,
+				outputPath: process.outputPath,
+			});
+		});
+		return {
+			role: "custom",
+			customType: "background-processes-runtime",
+			content: `<background_processes>\n${lines.join("\n")}\n</background_processes>`,
+			display: false,
+			details: { count: processes.length },
+			timestamp: Date.now(),
+		};
+	}
+
 	/**
-	 * Send a forced prompt as the provider's leading system prompt without recording it.
-	 *
-	 * A `before_agent_start` handler that returns `systemPrompt` needs that exact text at the
-	 * head of the request; a mid-conversation system message would leave the original prompt
-	 * in place. The forced text is a rendering of the current prompt, so the transcript keeps
-	 * its structured sections and the request is projected instead: the system messages
-	 * collapse into one head holding the forced text and the current tools. Runs after the
-	 * `context` extension handlers.
+	 * Project request-only context after extension transforms without recording it.
+	 * Forced prompts replace persisted system messages; active background processes are
+	 * appended as transient runtime context for both forced and structured prompts.
 	 */
 	private _installAgentForcedPromptProjection(): void {
 		const previousTransformContext = this.agent.transformContext;
 		this.agent.transformContext = async (messages, signal) => {
 			const transformed = previousTransformContext ? await previousTransformContext(messages, signal) : messages;
 			const forced = this._runSystemPromptOptions?.forceSystemPrompt;
-			if (forced === undefined) return transformed;
-			const current = getCurrentSystemMessage(transformed);
-			const head: SystemMessage = {
-				role: "system",
-				content: forced,
-				...(current?.toolsAdded ? { toolsAdded: current.toolsAdded } : {}),
-				timestamp: current?.timestamp ?? Date.now(),
-			};
-			return [head, ...transformed.filter((message) => message.role !== "system")];
+			let projected = transformed;
+			if (forced !== undefined) {
+				const current = getCurrentSystemMessage(transformed);
+				const head: SystemMessage = {
+					role: "system",
+					content: forced,
+					...(current?.toolsAdded ? { toolsAdded: current.toolsAdded } : {}),
+					timestamp: current?.timestamp ?? Date.now(),
+				};
+				projected = [head, ...transformed.filter((message) => message.role !== "system")];
+			}
+			const backgroundProcesses = this._backgroundProcessContextMessage();
+			return backgroundProcesses ? [...projected, backgroundProcesses] : projected;
 		};
 	}
 
@@ -1608,6 +1811,23 @@ export class AgentSession {
 			this._deferredSettledActions.push(async () => await this.prompt(text, options));
 			return;
 		}
+		const resumeProcessDelivery = (options?.source ?? "interactive") !== "extension";
+		this._promptCallsInFlight++;
+		if (this._processDeliveryTimer) {
+			clearTimeout(this._processDeliveryTimer);
+			this._processDeliveryTimer = undefined;
+		}
+		try {
+			if (this._processDeliveryPromise) await this._processDeliveryPromise;
+			if (resumeProcessDelivery) this._processDeliveryPaused = false;
+			await this._prompt(text, options);
+		} finally {
+			this._promptCallsInFlight--;
+			this._scheduleProcessDelivery(0);
+		}
+	}
+
+	private async _prompt(text: string, options?: PromptOptions): Promise<void> {
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
 		let messages: AgentMessage[] | undefined;
@@ -2075,6 +2295,7 @@ export class AgentSession {
 	async abort(): Promise<void> {
 		if (this._isAgentRunActive) {
 			this._agentRunAbortRequested = true;
+			this._processDeliveryPaused = true;
 		}
 		this.abortRetry();
 		this.abortCompaction();
@@ -3251,7 +3472,7 @@ export class AgentSession {
 				)
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					bash: { commandPrefix: shellCommandPrefix, shellPath, processManager: this.processManager },
 				});
 
 		this._baseToolDefinitions = new Map(
