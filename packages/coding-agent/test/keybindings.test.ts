@@ -38,5 +38,6 @@ describe("Windows keybinding defaults", () => {
 			windowsKeybindings ? "ctrl+down" : ["ctrl+shift+down", "ctrl+down"],
 		);
 		expect(KEYBINDINGS["app.message.dequeue"].defaultKeys).toBe(windowsKeybindings ? "alt+q" : "alt+up");
+		expect(KEYBINDINGS["app.process.background"].defaultKeys).toBe("shift+ctrl+b");
 	});
 });
