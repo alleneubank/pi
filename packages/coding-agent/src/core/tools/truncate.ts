@@ -68,6 +68,24 @@ export function formatSize(bytes: number): string {
 	}
 }
 
+/** Notice appended when a tail snapshot is not the complete output. */
+export function appendTruncationNotice(
+	truncation: TruncationResult,
+	fullOutputPath: string,
+	lastLineBytes = truncation.outputBytes,
+): string {
+	if (!truncation.truncated) return "";
+	const startLine = truncation.totalLines - truncation.outputLines + 1;
+	const endLine = truncation.totalLines;
+	if (truncation.lastLinePartial) {
+		return `\n\n[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine} (line is ${formatSize(lastLineBytes)}). Full output: ${fullOutputPath}]`;
+	}
+	if (truncation.truncatedBy === "lines") {
+		return `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${fullOutputPath}]`;
+	}
+	return `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(truncation.maxBytes)} limit). Full output: ${fullOutputPath}]`;
+}
+
 /**
  * Truncate content from the head (keep first N lines/bytes).
  * Suitable for file reads where you want to see the beginning.

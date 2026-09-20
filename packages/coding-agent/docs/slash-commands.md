@@ -47,6 +47,7 @@ Review a session before exporting or sharing it. Sessions can contain prompts, t
 |---|---|
 | `/trust` | Save a project trust decision for future Pi processes |
 | `/mcp` | Manage MCP servers: sign in, reconnect, enable or disable, and change exposure |
+| `/processes` | Show owned background Bash processes without sending them to the model |
 | `/reload` | Reload keybindings, extensions, skills, templates, themes, and context files |
 | `/hotkeys` | Show active keyboard shortcuts |
 | `/changelog` | Show changelog entries |
