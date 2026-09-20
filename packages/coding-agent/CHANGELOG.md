@@ -2,15 +2,24 @@
 
 ## [Unreleased]
 
+### New Features
+
+- **Runtime-local background processes** — Let Bash continue after a response with PID and output-path tracking. Completion notices name the log instead of copying it, and `/processes` shows owned records to the human. See [Background Processes](README.md#background-processes).
+- **Mid-prompt skill autocomplete** — Complete and insert `/skill:name` references anywhere in a prompt without submitting it. See [Skills](docs/skills.md).
+- **System prompt inspection** — Render Pi's prompt through the public `buildSystemPrompt` API and use included examples to compare coding-agent prompts.
+
 ### Added
 
 - Added mid-prompt skill autocomplete for slash-led `skill:` references on later lines; `Enter` or `Tab` accepts them without submitting the prompt.
 - Exported `buildSystemPrompt` from the package root and the lightweight `@earendil-works/pi-coding-agent/system-prompt` subpath.
+- Added system-prompt inspection examples for rendering Pi prompts and capturing, extracting, and comparing other coding agents' prompts.
+- Added runtime-local background Bash processes with explicit or automatic yielding, PID and output-path reporting, active-process context, output-free completion notices, a human `/processes` view, process-tree cleanup, and a configurable Shift+Ctrl+B handoff. See [Background Processes](README.md#background-processes).
 
 ### Fixed
 
 - Fixed fork prereleases on the latest upstream base from showing a false update notification; notices now appear only when upstream advances past the fork's base.
 - Fixed the startup changelog reappearing every launch when the last-seen version carries a prerelease/build suffix (e.g. `0.85.1-fork.20260910.g678734131`); the version parser now reads only the leading `major.minor.patch`.
+- Fixed unresolved Markdown link destinations, including relative paths and fragments, disappearing behind unusable terminal hyperlinks; they now remain visible without invalid OSC 8 links.
 
 
 ## [0.87.0] - 2026-09-21
