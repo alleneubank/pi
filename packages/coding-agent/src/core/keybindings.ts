@@ -48,6 +48,10 @@ const APP_KEYBINDINGS = {
 	},
 	"app.model.select": { defaultKeys: "ctrl+l", description: "Open model selector" },
 	"app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
+	"app.process.background": {
+		defaultKeys: "shift+ctrl+b",
+		description: "Move the active Bash process to background",
+	},
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",
 		description: "Toggle thinking blocks",

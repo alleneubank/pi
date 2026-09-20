@@ -46,6 +46,7 @@ Review a session before exporting or sharing it. Sessions can contain prompts, t
 | Command | Description |
 |---|---|
 | `/trust` | Save a project trust decision for future Pi processes |
+| `/processes` | Show owned background Bash processes without sending them to the model |
 | `/reload` | Reload keybindings, extensions, skills, templates, themes, and context files |
 | `/hotkeys` | Show active keyboard shortcuts |
 | `/changelog` | Show changelog entries |

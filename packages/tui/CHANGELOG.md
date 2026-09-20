@@ -9,6 +9,7 @@
 ### Fixed
 
 - Fixed Markdown bold and italic not rendering next to CJK punctuation ([#10730](https://github.com/earendil-works/pi/pull/10730) by [@theBucky](https://github.com/theBucky))
+- Fixed unresolved Markdown link destinations, including relative paths and fragments, disappearing behind unusable terminal hyperlinks; they now remain visible without invalid OSC 8 links.
 
 ## [1.3.0] - 2026-10-15
 

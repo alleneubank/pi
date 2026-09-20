@@ -235,6 +235,10 @@
       "$ref": "#/$defs/KeybindingValue",
       "description": "Toggle tool output"
     },
+    "app.process.background": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move the active Bash process to background"
+    },
     "app.thinking.toggle": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Toggle thinking blocks"
