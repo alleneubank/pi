@@ -6,6 +6,10 @@
 
 - Mid-prompt skill autocomplete: a slash-led token at a word boundary on any line (e.g. `use /skil`, or `/skil` below pasted context) fuzzy-completes `skill:` commands, inserting a reference the model resolves on demand. Action commands stay at the start of the first line. `Enter` accepts embedded references without submitting the prompt; `Tab` also accepts.
 
+### Fixed
+
+- Fixed unresolved Markdown link destinations, including relative paths and fragments, disappearing behind unusable terminal hyperlinks; they now remain visible without invalid OSC 8 links.
+
 ## [0.87.1] - 2026-09-22
 
 ## [0.87.0] - 2026-09-21

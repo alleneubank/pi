@@ -14,10 +14,11 @@ import {
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import type { ProcessManager, ProcessOwner } from "../process-manager.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "./truncate.ts";
+import { appendTruncationNotice, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "./truncate.ts";
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
@@ -37,7 +38,10 @@ function resolveTimeoutMs(timeout: number | undefined): number | undefined {
 
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Shell command to execute" }),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
+	timeout: Type.Optional(Type.Number({ description: "Hard execution deadline in seconds (optional, no default)" })),
+	runInBackground: Type.Optional(
+		Type.Boolean({ description: "Return immediately and continue the command in background" }),
+	),
 });
 
 export const bashToolSystemPromptContribution = {
@@ -50,6 +54,9 @@ export type BashToolInput = Static<typeof bashSchema>;
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+	statusPath?: string;
+	pid?: number;
+	state?: "running" | "exited";
 }
 
 /**
@@ -167,7 +174,7 @@ export interface BashSpawnContext {
 
 export type BashSpawnHook = (context: BashSpawnContext) => BashSpawnContext;
 
-function resolveSpawnContext(
+export function resolveBashSpawnContext(
 	command: string,
 	cwd: string,
 	spawnHook: BashSpawnHook | undefined,
@@ -206,6 +213,10 @@ export interface BashToolOptions {
 	exposeSessionEnvironment?: boolean;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
+	/** Runtime-local process manager. Background execution is unavailable when omitted. */
+	processManager?: ProcessManager;
+	/** Override process ownership for hosts without an ExtensionContext. */
+	processOwner?: () => ProcessOwner;
 }
 
 export type BashRenderState = {
@@ -233,23 +244,25 @@ export function createShellToolDefinition(
 	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
+	const processManager = options?.processManager;
+	const supportsBackground = processManager !== undefined && options?.operations === undefined;
 	return {
 		name: config.name,
 		label: config.label,
-		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. timeout is a hard deadline. runInBackground returns immediately with the OS PID, output path, and JSON status path. Read status and output explicitly when needed; completion never notifies or resumes the agent. Files last until record eviction or session disposal. Otherwise the command stays in the foreground until it exits.`,
 		promptSnippet: config.promptSnippet,
 		promptGuidelines: exposeSessionEnvironment && config.promptGuidelines ? [...config.promptGuidelines] : undefined,
 		parameters: bashSchema,
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		async execute(
 			_toolCallId,
-			{ command, timeout }: { command: string; timeout?: number },
+			{ command, timeout, runInBackground }: { command: string; timeout?: number; runInBackground?: boolean },
 			signal?: AbortSignal,
 			onUpdate?,
 			ctx?: ExtensionContext,
 		) {
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
-			const spawnContext = resolveSpawnContext(
+			const spawnContext = resolveBashSpawnContext(
 				resolvedCommand,
 				ctx?.cwd || cwd,
 				spawnHook,
@@ -322,23 +335,105 @@ export function createShellToolDefinition(
 				const truncation = snapshot.truncation;
 				let text = snapshot.content || emptyText;
 				let details: BashToolDetails | undefined;
-				if (truncation.truncated) {
+				if (truncation.truncated && snapshot.fullOutputPath) {
 					details = { truncation, fullOutputPath: snapshot.fullOutputPath };
-					const startLine = truncation.totalLines - truncation.outputLines + 1;
-					const endLine = truncation.totalLines;
-					if (truncation.lastLinePartial) {
-						const lastLineSize = formatSize(output.getLastLineBytes());
-						text += `\n\n[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine} (line is ${lastLineSize}). Full output: ${snapshot.fullOutputPath}]`;
-					} else if (truncation.truncatedBy === "lines") {
-						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${snapshot.fullOutputPath}]`;
-					} else {
-						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${snapshot.fullOutputPath}]`;
-					}
+					text += appendTruncationNotice(truncation, snapshot.fullOutputPath, output.getLastLineBytes());
 				}
 				return { text, details };
 			};
 
 			const appendStatus = (text: string, status: string) => `${text ? `${text}\n\n` : ""}${status}`;
+
+			if (runInBackground && !supportsBackground) {
+				throw new Error("Background execution is unavailable for custom Bash operations");
+			}
+			if (supportsBackground) {
+				if (signal?.aborted) throw new Error("Command aborted");
+				const timeoutMs = resolveTimeoutMs(timeout);
+				const owner =
+					options?.processOwner?.() ??
+					(ctx
+						? {
+								sessionId: ctx.sessionManager.getSessionId(),
+								branchAnchorId: ctx.sessionManager.getLeafId(),
+							}
+						: undefined);
+				if (!owner) throw new Error("Background execution requires a session owner");
+				const started = processManager.start({
+					command: spawnContext.command,
+					cwd: spawnContext.cwd,
+					env: spawnContext.env,
+					shellConfig: getShellConfig(options?.shellPath),
+					owner,
+					backgroundReason: runInBackground === true ? "explicit" : undefined,
+					timeoutMs,
+					onData: handleData,
+				});
+				if (runInBackground) {
+					const snapshot = await finishOutput();
+					const partial = snapshot.content ? `${snapshot.content}\n\n` : "";
+					return {
+						content: [
+							{
+								type: "text",
+								text: `${partial}Command is running in background.\nPID: ${started.pid}\nOutput: ${started.outputPath}\nStatus: ${started.statusPath}`,
+							},
+						],
+						details: {
+							pid: started.pid,
+							state: "running",
+							fullOutputPath: started.outputPath,
+							statusPath: started.statusPath,
+						},
+					};
+				}
+
+				const outcome = await processManager.waitForForeground(started.pid, { signal });
+				const snapshot = await finishOutput();
+				if (outcome.type === "backgrounded") {
+					const partial = snapshot.content ? `${snapshot.content}\n\n` : "";
+					return {
+						content: [
+							{
+								type: "text",
+								text: `${partial}Command moved to background (${outcome.reason}).\nPID: ${started.pid}\nOutput: ${started.outputPath}\nStatus: ${started.statusPath}`,
+							},
+						],
+						details: {
+							pid: started.pid,
+							state: "running",
+							fullOutputPath: started.outputPath,
+							statusPath: started.statusPath,
+						},
+					};
+				}
+
+				const { text: outputText, details } = formatOutput(snapshot);
+				const processSnapshot = outcome.snapshot;
+				const managedDetails: BashToolDetails | undefined = details
+					? { ...details, fullOutputPath: started.outputPath, pid: started.pid, state: "exited" }
+					: undefined;
+				if (processSnapshot.state === "cancelled") {
+					throw new Error(appendStatus(outputText === "(no output)" ? "" : outputText, "Command aborted"));
+				}
+				if (processSnapshot.state === "timed_out") {
+					throw new Error(
+						appendStatus(
+							outputText === "(no output)" ? "" : outputText,
+							`Command timed out after ${timeout} seconds`,
+						),
+					);
+				}
+				if (processSnapshot.state === "failed") {
+					const status =
+						processSnapshot.error ??
+						(processSnapshot.signal
+							? `Command terminated by signal ${processSnapshot.signal}`
+							: `Command exited with code ${processSnapshot.exitCode ?? "unknown"}`);
+					throw new Error(appendStatus(outputText === "(no output)" ? "" : outputText, status));
+				}
+				return { content: [{ type: "text", text: outputText }], details: managedDetails };
+			}
 
 			try {
 				let exitCode: number | null;

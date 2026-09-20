@@ -3002,6 +3002,11 @@ export class InteractiveMode {
 		this.ui.onDebug = () => this.handleDebugCommand();
 		this.defaultEditor.onAction("app.model.select", () => this.showModelSelector());
 		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
+		this.defaultEditor.onAction("app.process.background", () => {
+			const processId = this.session.backgroundForegroundBash();
+			if (processId) this.showStatus(`Process ${processId} moved to background`);
+			else this.showWarning("No foreground Bash process is running");
+		});
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
 		this.defaultEditor.onAction("app.editor.external", () => void this.handleOpenExternalEditor());
 		this.defaultEditor.onAction(
@@ -3138,6 +3143,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/processes") {
+				this.handleProcessesCommand();
+				this.editor.setText("");
+				return;
+			}
 			if (text === "/changelog") {
 				this.handleChangelogCommand();
 				this.editor.setText("");
@@ -3252,11 +3262,17 @@ export class InteractiveMode {
 			}
 
 			// If streaming, use prompt() with steer behavior
-			// This handles extension commands (execute immediately), prompt template expansion, and queueing
+			// This handles extension commands (execute immediately), prompt template expansion, and queueing.
+			// The editor already cleared the text before this callback; put it back if the steer does not queue.
 			if (this.session.isStreaming) {
 				this.editor.addToHistory?.(text);
-				this.editor.setText("");
-				await this.session.prompt(text, { streamingBehavior: "steer" });
+				try {
+					await this.session.prompt(text, { streamingBehavior: "steer" });
+				} catch (error: unknown) {
+					this.editor.setText(text);
+					this.showError(error instanceof Error ? error.message : String(error));
+					return;
+				}
 				this.updatePendingMessagesDisplay();
 				this.ui.requestRender();
 				return;
@@ -6499,6 +6515,40 @@ export class InteractiveMode {
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(info, 1, 0));
+		this.ui.requestRender();
+	}
+
+	private handleProcessesCommand(): void {
+		const processes = this.session.listOwnedBackgroundProcesses();
+		const lines = [`${theme.bold("Background Bash processes")}`];
+		if (processes.length === 0) {
+			lines.push("", theme.fg("dim", "No background Bash processes."));
+		} else {
+			const now = Date.now();
+			for (const process of processes) {
+				const seconds = Math.max(0, Math.floor((now - process.startedAt) / 1000));
+				const age = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`;
+				const command = process.command.length > 120 ? `${process.command.slice(0, 119)}…` : process.command;
+				const reason = process.backgroundReason ?? "unknown";
+				const status = process.signal
+					? `${process.state} ${process.signal}`
+					: process.exitCode !== undefined
+						? `${process.state} ${process.exitCode}`
+						: process.state;
+				lines.push(
+					"",
+					`${theme.fg("dim", "PID:")} ${process.pid}  ${status}  ${reason}  ${age}`,
+					command,
+					`${theme.fg("dim", "Output:")} ${process.outputPath}`,
+					`${theme.fg("dim", "Status:")} ${process.statusPath}`,
+				);
+				if (process.error) {
+					lines.push(`${theme.fg("dim", "Error:")} ${process.error}`);
+				}
+			}
+		}
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(lines.join("\n"), 1, 0));
 		this.ui.requestRender();
 	}
 

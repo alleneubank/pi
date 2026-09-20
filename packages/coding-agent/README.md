@@ -41,7 +41,7 @@ pi
 
 For a built-in AI provider, run `/login` inside Pi to connect a subscription or API key. Then give Pi a task.
 
-See the [documentation](docs/index.md) for full setup and usage instructions.
+See the [documentation](docs/index.md) for full setup and usage instructions. For runtime-local background Bash processes, see [Background processes](docs/usage.md#run-a-background-process).
 
 ## Development
 

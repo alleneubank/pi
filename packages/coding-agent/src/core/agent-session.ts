@@ -107,6 +107,7 @@ import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import { type BashExecutionMessage, type CustomMessage, convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
+import { ProcessManager, type ProcessSnapshot } from "./process-manager.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { exportSessionToJsonl } from "./session-export.ts";
@@ -329,6 +330,7 @@ export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
 	readonly settingsManager: SettingsManager;
+	readonly processManager: ProcessManager;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 
@@ -348,6 +350,8 @@ export class AgentSession {
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 	/** Context-only custom messages queued during a run, flushed once the current turn's tool results are in. */
 	private _pendingCustomMessages: CustomMessage[] = [];
+	/** Custom messages already written to the session tree. A later queue drain must not append them again. */
+	private _alreadyPersistedCustomMessages = new WeakSet<CustomMessage>();
 
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
@@ -413,6 +417,7 @@ export class AgentSession {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
+		this.processManager = new ProcessManager();
 		this._scopedModels = config.scopedModels ?? [];
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
@@ -834,6 +839,34 @@ export class AgentSession {
 		}
 	}
 
+	private _ownerBelongsToActiveBranch(owner: ProcessSnapshot["owner"]): boolean {
+		return (
+			owner.branchAnchorId === null ||
+			this.sessionManager.getBranch().some((entry) => entry.id === owner.branchAnchorId)
+		);
+	}
+
+	backgroundForegroundBash(): number | undefined {
+		return this.processManager.backgroundForegroundBash();
+	}
+
+	/** Owned background records on the active branch, running records first. */
+	listOwnedBackgroundProcesses(): ProcessSnapshot[] {
+		return this.processManager
+			.list()
+			.filter(
+				(process) =>
+					process.backgroundReason !== undefined &&
+					process.owner.sessionId === this.sessionId &&
+					this._ownerBelongsToActiveBranch(process.owner),
+			)
+			.sort((left, right) => {
+				if (left.state === "running" && right.state !== "running") return -1;
+				if (left.state !== "running" && right.state === "running") return 1;
+				return left.startedAt - right.startedAt;
+			});
+	}
+
 	private _emitQueueUpdate(): void {
 		this._emit({
 			type: "queue_update",
@@ -923,13 +956,14 @@ export class AgentSession {
 			let entryId: string | undefined;
 			// Check if this is a custom message from extensions
 			if (event.message.role === "custom") {
-				// Persist as CustomMessageEntry
-				entryId = this.sessionManager.appendCustomMessageEntry(
-					event.message.customType,
-					event.message.content,
-					event.message.display,
-					event.message.details,
-				);
+				if (!this._alreadyPersistedCustomMessages.has(event.message)) {
+					entryId = this.sessionManager.appendCustomMessageEntry(
+						event.message.customType,
+						event.message.content,
+						event.message.display,
+						event.message.details,
+					);
+				}
 			} else if (
 				event.message.role === "system" ||
 				event.message.role === "user" ||
@@ -1168,6 +1202,7 @@ export class AgentSession {
 	 * Call this when completely done with the session.
 	 */
 	dispose(): void {
+		this.processManager.dispose();
 		try {
 			this.abortRetry();
 			this.abortCompaction();
@@ -1225,14 +1260,19 @@ export class AgentSession {
 		return this.agent.state.thinkingLevel;
 	}
 
+	/** Whether an agent run is active, including one whose session flag was not the caller that started it. */
+	private _agentIsBusy(): boolean {
+		return this._isAgentRunActive || this.agent.state.isStreaming;
+	}
+
 	/** Whether the session is currently processing an agent run or post-run continuation. */
 	get isStreaming(): boolean {
-		return this._isAgentRunActive;
+		return this._agentIsBusy();
 	}
 
 	/** Whether the session has no active agent run, compaction, branch summary, retry, or queued continuation. */
 	get isIdle(): boolean {
-		return !this._isAgentRunActive && !this.isCompacting;
+		return !this._agentIsBusy() && !this.isCompacting;
 	}
 
 	/** Current effective system prompt, including changes not yet sent to the model. */
@@ -1422,13 +1462,7 @@ export class AgentSession {
 
 	/**
 	 * Send a forced prompt as the provider's leading system prompt without recording it.
-	 *
-	 * A `before_agent_start` handler that returns `systemPrompt` needs that exact text at the
-	 * head of the request; a mid-conversation system message would leave the original prompt
-	 * in place. The forced text is a rendering of the current prompt, so the transcript keeps
-	 * its structured sections and the request is projected instead: the system messages
-	 * collapse into one head holding the forced text and the current tools. Runs after the
-	 * `context` extension handlers.
+	 * Runs after extension context transforms; the structured transcript remains intact.
 	 */
 	private _installAgentForcedPromptProjection(): void {
 		const previousTransformContext = this.agent.transformContext;
@@ -1466,10 +1500,18 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		if (this._agentIsBusy()) {
+			throw new Error(
+				"Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion.",
+			);
+		}
+		const previousRunActive = this._isAgentRunActive;
 		this._agentRunAbortRequested = false;
 		this._isAgentRunActive = true;
+		let ownsRun = false;
 		try {
 			await this.agent.prompt(messages);
+			ownsRun = true;
 			while (!this._agentRunAbortRequested) {
 				if (await this._handlePostAgentRun()) {
 					if (this._agentRunAbortRequested) break;
@@ -1480,12 +1522,17 @@ export class AgentSession {
 				if (this._agentRunAbortRequested) break;
 				await this.agent.continue();
 			}
+		} catch (error) {
+			if (!ownsRun) this._isAgentRunActive = previousRunActive || this.agent.state.isStreaming;
+			throw error;
 		} finally {
-			if (this._agentRunAbortRequested) this._finishCancelledRetry();
-			this._runSystemPromptOptions = undefined;
-			this._flushPendingBashMessages();
-			this._flushPendingCustomMessages();
-			await this._emitAgentSettled();
+			if (ownsRun) {
+				if (this._agentRunAbortRequested) this._finishCancelledRetry();
+				this._runSystemPromptOptions = undefined;
+				this._flushPendingBashMessages();
+				this._flushPendingCustomMessages();
+				await this._emitAgentSettled();
+			}
 		}
 	}
 
@@ -1608,6 +1655,10 @@ export class AgentSession {
 			this._deferredSettledActions.push(async () => await this.prompt(text, options));
 			return;
 		}
+		await this._prompt(text, options);
+	}
+
+	private async _prompt(text: string, options?: PromptOptions): Promise<void> {
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
 		let messages: AgentMessage[] | undefined;
@@ -1969,14 +2020,15 @@ export class AgentSession {
 		}
 	}
 
-	private _appendCustomMessage(appMessage: CustomMessage): void {
+	private _appendCustomMessage(appMessage: CustomMessage, options?: { refreshAgent?: boolean }): void {
+		this._alreadyPersistedCustomMessages.add(appMessage);
 		this.sessionManager.appendCustomMessageEntry(
 			appMessage.customType,
 			appMessage.content,
 			appMessage.display,
 			appMessage.details,
 		);
-		this._refreshFinalizedContext();
+		if (options?.refreshAgent !== false) this._refreshFinalizedContext();
 		this._emit({ type: "message_start", message: appMessage });
 		this._emit({ type: "message_end", message: appMessage });
 	}
@@ -2073,9 +2125,7 @@ export class AgentSession {
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(): Promise<void> {
-		if (this._isAgentRunActive) {
-			this._agentRunAbortRequested = true;
-		}
+		if (this._isAgentRunActive) this._agentRunAbortRequested = true;
 		this.abortRetry();
 		this.abortCompaction();
 		this.abortBranchSummary();
@@ -3251,7 +3301,7 @@ export class AgentSession {
 				)
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					bash: { commandPrefix: shellCommandPrefix, shellPath, processManager: this.processManager },
 				});
 
 		this._baseToolDefinitions = new Map(

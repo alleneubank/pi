@@ -75,6 +75,14 @@ Prefix a command with `!` to run it and include its output in the conversation:
 
 Use `!!` when you want to run a command without sending its output to the model.
 
+## Run a background process
+
+The model-callable `bash` tool can set `runInBackground` to return immediately with the process PID, output path, and status path. Otherwise Bash waits for the command to exit; `timeout` remains a separate hard deadline. Press `Shift+Ctrl+B` to move an active model Bash command to the background without restarting it. User `!` and `!!` commands remain in the foreground.
+
+Use `ps` and `kill` to inspect or stop the process, and read its output and status paths for details. `/processes` shows owned process records to the human without sending them to the model. The status file contains `pid`, `state`, `outputPath`, and `startedAt`, with `endedAt`, `exitCode`, `signal`, or `error` when applicable. States are `running`, `exited`, `failed`, `cancelled`, and `timed_out`. A recorded `running` state is not proof of liveness after a crash; a missing file means unknown, not success. Completion does not wake the conversation or send output to the model.
+
+Background processes belong to the current runtime and session branch. `/reload` preserves them; `/new`, `/resume`, `/fork`, quitting, or runtime disposal cancels them. Finite records remain until eviction or disposal, with limits of 32 running processes, 128 records, and 10 MiB of output per process. Print and JSON modes do not wait for background Bash. For work that must survive Pi, use tmux or another supervisor.
+
 ## Copy, export, or share results
 
 Press `Ctrl+X` or run `/copy` to copy the last assistant response. Use `/export` to save the session as HTML or JSONL.
