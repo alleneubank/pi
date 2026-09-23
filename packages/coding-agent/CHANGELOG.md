@@ -10,6 +10,7 @@
 - Added system-prompt inspection examples for rendering Pi prompts and capturing, extracting, and comparing other coding agents' prompts.
 - Added runtime-local background Bash processes with explicit backgrounding, PID, output-path, and status-path reporting, a human `/processes` view, process-tree cleanup, and a configurable Shift+Ctrl+B handoff for active model Bash. See [Background processes](docs/usage.md#run-a-background-process).
 - Added per-question multi-select to the questionnaire extension example, with checkbox toggling, combined custom answers, submission review, and configurable shortcuts.
+- Added paired `pi:user-input` events to the questionnaire example so notification extensions can observe mid-turn user waits, including cleanup on cancellation and abort.
 
 ### Fixed
 
