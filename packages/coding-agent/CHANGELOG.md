@@ -30,6 +30,7 @@
 - Fixed fork prereleases on the latest upstream base from showing a false update notification; notices now appear only when upstream advances past the fork's base.
 - Fixed the startup changelog reappearing every launch when the last-seen version carries a prerelease/build suffix (e.g. `0.85.1-fork.20260910.g678734131`); the version parser now reads only the leading `major.minor.patch`.
 - Fixed unresolved Markdown link destinations, including relative paths and fragments, disappearing behind unusable terminal hyperlinks; they now remain visible without invalid OSC 8 links.
+- Fixed GitHub Copilot Claude Opus 5.5 exposing unsupported off and minimal thinking levels after model catalog regeneration.
 
 ## [1.3.0] - 2026-10-15
 
