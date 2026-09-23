@@ -49,7 +49,7 @@ export class ModelRuntime { static create() {} }
 ` : 'export const marker = "local tarball";',
 			...(isAgent ? {
 				"dist/core/system-prompt.js": `export function buildSystemPrompt({ customPrompt, cwd }) {
-  return customPrompt + "\\nCurrent working directory: " + cwd + "\\n";
+  return customPrompt + "\\n\\n<cwd>\\n" + cwd + "\\n</cwd>";
 }`,
 				"dist/cli.js": 'console.log("1.0.0");',
 				"dist/bundle/cli.js": 'console.log("1.0.0");',
@@ -101,6 +101,13 @@ test("fails when the system-prompt subpath is missing from the packed package", 
 	delete manifest.exports["./system-prompt"];
 	writeFileSync(path, JSON.stringify(manifest));
 	assert.throws(() => smokeTestCodingAgentConsumer(directory), /Package subpath '\.\/system-prompt' is not defined/);
+});
+
+test("fails when the packed system-prompt renderer omits the requested working directory", (t) => {
+	const directory = createFixture(t);
+	const path = join(directory, "node_modules", codingAgentName, "dist/core/system-prompt.js");
+	writeFileSync(path, "export function buildSystemPrompt({ customPrompt }) { return customPrompt; }");
+	assert.throws(() => smokeTestCodingAgentConsumer(directory), /Expected values to be strictly equal/);
 });
 
 test("fails if a development-only dependency is added back to the published dependency tree", (t) => {
