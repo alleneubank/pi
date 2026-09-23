@@ -120,6 +120,12 @@ const APP_KEYBINDINGS = {
 		defaultKeys: "ctrl+backspace",
 		description: "Delete session when query is empty",
 	},
+	"app.questionnaire.toggle": { defaultKeys: "space", description: "Toggle questionnaire option" },
+	"app.questionnaire.next": { defaultKeys: ["tab", "right"], description: "Next questionnaire tab" },
+	"app.questionnaire.previous": {
+		defaultKeys: ["shift+tab", "left"],
+		description: "Previous questionnaire tab",
+	},
 	"app.models.save": {
 		defaultKeys: "ctrl+s",
 		description: "Save model selection",

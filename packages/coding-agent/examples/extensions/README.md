@@ -33,7 +33,7 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | `todo.ts` | Todo list tool + `/todos` command with custom rendering and state persistence |
 | `hello.ts` | Minimal custom tool example |
 | `question.ts` | Demonstrates `ctx.ui.select()` for asking the user questions with custom UI |
-| `questionnaire.ts` | Multi-question input with tab bar navigation between questions |
+| `questionnaire.ts` | Tabbed questions with per-question multi-select, free-text answers, and submission review |
 | `tool-override.ts` | Override built-in tools (e.g., add logging/access control to `read`) |
 | `dynamic-tools.ts` | Register tools after startup (`session_start`) and at runtime via command, with prompt snippets and tool-specific prompt guidelines |
 | `structured-output.ts` | Final structured-output tool that returns `terminate: true` so the agent can end on the tool call |
@@ -42,6 +42,32 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | `truncated-tool.ts` | Wraps ripgrep with proper output truncation (50KB/2000 lines) |
 | `ssh.ts` | Delegate all tools to a remote machine via SSH using pluggable operations |
 | `subagent/` | Delegate tasks to specialized subagents with isolated context windows |
+
+#### Questionnaire multi-select
+
+The `questionnaire` tool accepts `multiSelect: true` on individual questions. Questions without it remain single-select.
+
+```json
+{
+  "questions": [{
+    "id": "platforms",
+    "label": "Platforms",
+    "prompt": "Which platforms should be supported?",
+    "multiSelect": true,
+    "options": [
+      { "value": "linux", "label": "Linux" },
+      { "value": "macos", "label": "macOS" },
+      { "value": "windows", "label": "Windows" }
+    ]
+  }]
+}
+```
+
+In multi-select questions, Space toggles options and Enter confirms at least one selection. The optional “Type something” row opens a text editor; submitting text returns to the choices and retains checked options. Space on an existing custom answer clears it. Single-question calls finish on confirmation; multi-question calls have a final review tab. Changing a confirmed selection requires confirming that question again before submission, while tab navigation preserves unfinished selections.
+
+Multi-select answers in tool-result `details.answers` contain `id`, `values`, `labels`, and optional `custom` text. The model receives the arrays as JSON, preserving values containing commas. Single-select answers retain `value`, `label`, `wasCustom`, and optional `index`.
+
+The tool is terminal-only and uses sequential execution. Its toggle and tab shortcuts are configurable as `app.questionnaire.toggle`, `app.questionnaire.next`, and `app.questionnaire.previous`; movement, confirmation, cancellation, and text submission use the standard `tui.select.*` and `tui.input.submit` bindings. See [Keybindings](../../docs/keybindings.md).
 
 ### Commands & UI
 

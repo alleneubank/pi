@@ -3,18 +3,11 @@
  *
  * Single question: simple options list
  * Multiple questions: tab bar navigation between questions
+ * Per-question multiSelect: toggle choices, then confirm the answer
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-	Editor,
-	type EditorTheme,
-	Key,
-	matchesKey,
-	Text,
-	visibleWidth,
-	wrapTextWithAnsi,
-} from "@earendil-works/pi-tui";
+import { Editor, type EditorTheme, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 // Types
@@ -32,14 +25,36 @@ interface Question {
 	prompt: string;
 	options: QuestionOption[];
 	allowOther: boolean;
+	multiSelect: boolean;
 }
 
-interface Answer {
+interface SingleAnswer {
 	id: string;
 	value: string;
 	label: string;
 	wasCustom: boolean;
 	index?: number;
+}
+
+interface MultiAnswer {
+	id: string;
+	values: string[];
+	labels: string[];
+	custom?: string;
+}
+
+type Answer = SingleAnswer | MultiAnswer;
+
+interface MultiDraft {
+	selected: Set<number>;
+	custom?: string;
+}
+
+function answerSummary(answer: Answer): string {
+	if ("values" in answer) {
+		return [...answer.labels, ...(answer.custom ? [`(wrote) ${answer.custom}`] : [])].join(", ");
+	}
+	return `${answer.wasCustom ? "(wrote) " : ""}${answer.label}`;
 }
 
 interface QuestionnaireResult {
@@ -65,6 +80,9 @@ const QuestionSchema = Type.Object({
 	prompt: Type.String({ description: "The full question text to display" }),
 	options: Type.Array(QuestionOptionSchema, { description: "Available options to choose from" }),
 	allowOther: Type.Optional(Type.Boolean({ description: "Allow 'Type something' option (default: true)" })),
+	multiSelect: Type.Optional(
+		Type.Boolean({ description: "Allow multiple selections for this question (default: false)" }),
+	),
 });
 
 const QuestionnaireParams = Type.Object({
@@ -86,8 +104,9 @@ export default function questionnaire(pi: ExtensionAPI) {
 		name: "questionnaire",
 		label: "Questionnaire",
 		description:
-			"Ask the user one or more questions. Use for clarifying requirements, getting preferences, or confirming decisions. For single questions, shows a simple option list. For multiple questions, shows a tab-based interface.",
+			"Ask the user one or more questions. Use for clarifying requirements, getting preferences, or confirming decisions. Set multiSelect: true on any question to allow multiple choices and an optional custom answer. For single questions, shows a simple option list. For multiple questions, shows a tab-based interface.",
 		parameters: QuestionnaireParams,
+		executionMode: "sequential",
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			if (ctx.mode !== "tui") {
@@ -102,12 +121,13 @@ export default function questionnaire(pi: ExtensionAPI) {
 				...q,
 				label: q.label || `Q${i + 1}`,
 				allowOther: q.allowOther !== false,
+				multiSelect: q.multiSelect === true,
 			}));
 
 			const isMulti = questions.length > 1;
 			const totalTabs = questions.length + 1; // questions + Submit
 
-			const result = await ctx.ui.custom<QuestionnaireResult>((tui, theme, _kb, done) => {
+			const result = await ctx.ui.custom<QuestionnaireResult>((tui, theme, kb, done) => {
 				// State
 				let currentTab = 0;
 				let optionIndex = 0;
@@ -115,6 +135,9 @@ export default function questionnaire(pi: ExtensionAPI) {
 				let inputQuestionId: string | null = null;
 				let cachedLines: string[] | undefined;
 				const answers = new Map<string, Answer>();
+				const drafts = new Map<string, MultiDraft>(
+					questions.filter((q) => q.multiSelect).map((q) => [q.id, { selected: new Set<number>() }]),
+				);
 
 				// Editor for "Type something" option
 				const editorTheme: EditorTheme = {
@@ -175,21 +198,37 @@ export default function questionnaire(pi: ExtensionAPI) {
 					answers.set(questionId, { id: questionId, value, label, wasCustom, index });
 				}
 
-				// Editor submit callback
+				function editCustomAnswer(q: Question) {
+					inputMode = true;
+					inputQuestionId = q.id;
+					editor.setText(drafts.get(q.id)?.custom ?? "");
+					refresh();
+				}
+
 				editor.onSubmit = (value) => {
 					if (!inputQuestionId) return;
-					const trimmed = value.trim() || "(no response)";
-					saveAnswer(inputQuestionId, trimmed, trimmed, true);
+					const draft = drafts.get(inputQuestionId);
+					if (draft) {
+						draft.custom = value.trim() || undefined;
+						answers.delete(inputQuestionId);
+					} else {
+						const trimmed = value.trim() || "(no response)";
+						saveAnswer(inputQuestionId, trimmed, trimmed, true);
+					}
 					inputMode = false;
 					inputQuestionId = null;
 					editor.setText("");
-					advanceAfterAnswer();
+					if (draft) {
+						optionIndex = 0;
+						refresh();
+					} else {
+						advanceAfterAnswer();
+					}
 				};
 
 				function handleInput(data: string) {
-					// Input mode: route to editor
 					if (inputMode) {
-						if (matchesKey(data, Key.escape)) {
+						if (kb.matches(data, "tui.select.cancel")) {
 							inputMode = false;
 							inputQuestionId = null;
 							editor.setText("");
@@ -201,18 +240,19 @@ export default function questionnaire(pi: ExtensionAPI) {
 						return;
 					}
 
-					const q = currentQuestion();
-					const opts = currentOptions();
+					if (kb.matches(data, "tui.select.cancel")) {
+						submit(true);
+						return;
+					}
 
-					// Tab navigation (multi-question only)
 					if (isMulti) {
-						if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
+						if (kb.matches(data, "app.questionnaire.next")) {
 							currentTab = (currentTab + 1) % totalTabs;
 							optionIndex = 0;
 							refresh();
 							return;
 						}
-						if (matchesKey(data, Key.shift("tab")) || matchesKey(data, Key.left)) {
+						if (kb.matches(data, "app.questionnaire.previous")) {
 							currentTab = (currentTab - 1 + totalTabs) % totalTabs;
 							optionIndex = 0;
 							refresh();
@@ -220,46 +260,62 @@ export default function questionnaire(pi: ExtensionAPI) {
 						}
 					}
 
-					// Submit tab
 					if (currentTab === questions.length) {
-						if (matchesKey(data, Key.enter) && allAnswered()) {
-							submit(false);
-						} else if (matchesKey(data, Key.escape)) {
-							submit(true);
-						}
+						if (kb.matches(data, "tui.select.confirm") && allAnswered()) submit(false);
 						return;
 					}
 
-					// Option navigation
-					if (matchesKey(data, Key.up)) {
+					const q = currentQuestion();
+					if (!q) return;
+					const opts = currentOptions();
+					const draft = drafts.get(q.id);
+
+					if (kb.matches(data, "tui.select.up")) {
 						optionIndex = Math.max(0, optionIndex - 1);
 						refresh();
 						return;
 					}
-					if (matchesKey(data, Key.down)) {
-						optionIndex = Math.min(opts.length - 1, optionIndex + 1);
+					if (kb.matches(data, "tui.select.down")) {
+						optionIndex = Math.max(0, Math.min(opts.length - 1, optionIndex + 1));
 						refresh();
 						return;
 					}
 
-					// Select option
-					if (matchesKey(data, Key.enter) && q) {
-						const opt = opts[optionIndex];
+					const opt = opts[optionIndex];
+					if (draft && opt && kb.matches(data, "app.questionnaire.toggle")) {
 						if (opt.isOther) {
-							inputMode = true;
-							inputQuestionId = q.id;
-							editor.setText("");
-							refresh();
-							return;
+							if (draft.custom) draft.custom = undefined;
+							else editCustomAnswer(q);
+						} else if (draft.selected.has(optionIndex)) {
+							draft.selected.delete(optionIndex);
+						} else {
+							draft.selected.add(optionIndex);
 						}
-						saveAnswer(q.id, opt.value, opt.label, false, optionIndex + 1);
-						advanceAfterAnswer();
+						answers.delete(q.id);
+						refresh();
 						return;
 					}
 
-					// Cancel
-					if (matchesKey(data, Key.escape)) {
-						submit(true);
+					if (kb.matches(data, "tui.select.confirm")) {
+						if (opt?.isOther && (!draft || !draft.custom)) {
+							editCustomAnswer(q);
+							return;
+						}
+						if (draft) {
+							if (draft.selected.size === 0 && !draft.custom) return;
+							const selected = q.options.filter((_, index) => draft.selected.has(index));
+							answers.set(q.id, {
+								id: q.id,
+								values: selected.map((o) => o.value),
+								labels: selected.map((o) => o.label),
+								custom: draft.custom,
+							});
+						} else if (opt) {
+							saveAnswer(q.id, opt.value, opt.label, false, optionIndex + 1);
+						} else {
+							return;
+						}
+						advanceAfterAnswer();
 					}
 				}
 
@@ -270,6 +326,9 @@ export default function questionnaire(pi: ExtensionAPI) {
 					const renderWidth = Math.max(1, width);
 					const q = currentQuestion();
 					const opts = currentOptions();
+					const draft = q ? drafts.get(q.id) : undefined;
+					const confirmKey = kb.getKeys("tui.select.confirm").join("/") || "unbound";
+					const cancelKey = kb.getKeys("tui.select.cancel").join("/") || "unbound";
 
 					function addWrapped(text: string) {
 						lines.push(...wrapTextWithAnsi(text, renderWidth));
@@ -321,7 +380,10 @@ export default function questionnaire(pi: ExtensionAPI) {
 							const selected = i === optionIndex;
 							const isOther = opt.isOther === true;
 							const prefix = selected ? theme.fg("accent", "> ") : "  ";
-							const label = `${i + 1}. ${opt.label}${isOther && inputMode ? " ✎" : ""}`;
+							const checked = isOther ? Boolean(draft?.custom) : draft?.selected.has(i);
+							const checkbox = draft ? (checked ? "[x] " : "[ ] ") : "";
+							const optionLabel = isOther && draft?.custom ? `Other: ${draft.custom}` : opt.label;
+							const label = `${checkbox}${i + 1}. ${optionLabel}${isOther && inputMode ? " ✎" : ""}`;
 							const color = selected || (isOther && inputMode) ? "accent" : "text";
 
 							addWrappedWithPrefix(prefix, theme.fg(color, label));
@@ -343,21 +405,21 @@ export default function questionnaire(pi: ExtensionAPI) {
 							lines.push(` ${line}`);
 						}
 						lines.push("");
-						addWrappedWithPrefix(" ", theme.fg("dim", "Enter to submit • Esc to cancel"));
+						const submitKey = kb.getKeys("tui.input.submit").join("/") || "unbound";
+						addWrappedWithPrefix(" ", theme.fg("dim", `${submitKey} to submit • ${cancelKey} to go back`));
 					} else if (currentTab === questions.length) {
 						addWrappedWithPrefix(" ", theme.fg("accent", theme.bold("Ready to submit")));
 						lines.push("");
 						for (const question of questions) {
 							const answer = answers.get(question.id);
 							if (answer) {
-								const prefix = answer.wasCustom ? "(wrote) " : "";
-								const summary = `${theme.fg("muted", `${question.label}: `)}${theme.fg("text", prefix + answer.label)}`;
+								const summary = `${theme.fg("muted", `${question.label}: `)}${theme.fg("text", answerSummary(answer))}`;
 								addWrappedWithPrefix(" ", summary);
 							}
 						}
 						lines.push("");
 						if (allAnswered()) {
-							addWrappedWithPrefix(" ", theme.fg("success", "Press Enter to submit"));
+							addWrappedWithPrefix(" ", theme.fg("success", `Press ${confirmKey} to submit`));
 						} else {
 							const missing = questions
 								.filter((q) => !answers.has(q.id))
@@ -373,10 +435,26 @@ export default function questionnaire(pi: ExtensionAPI) {
 
 					lines.push("");
 					if (!inputMode) {
-						const help = isMulti
-							? "Tab/←→ navigate • ↑↓ select • Enter confirm • Esc cancel"
-							: "↑↓ navigate • Enter select • Esc cancel";
-						addWrappedWithPrefix(" ", theme.fg("dim", help));
+						const hints: string[] = [];
+						if (isMulti) {
+							const nextKey = kb.getKeys("app.questionnaire.next").join("/") || "unbound";
+							const previousKey = kb.getKeys("app.questionnaire.previous").join("/") || "unbound";
+							hints.push(`${nextKey} next tab`, `${previousKey} previous tab`);
+						}
+						if (q) {
+							const upKey = kb.getKeys("tui.select.up").join("/") || "unbound";
+							const downKey = kb.getKeys("tui.select.down").join("/") || "unbound";
+							hints.push(`${upKey}/${downKey} navigate`);
+						}
+						if (draft) {
+							const toggleKey = kb.getKeys("app.questionnaire.toggle").join("/") || "unbound";
+							hints.push(`${toggleKey} toggle`);
+							if (draft.selected.size === 0 && !draft.custom) {
+								addWrappedWithPrefix(" ", theme.fg("muted", "Select at least one option or type an answer."));
+							}
+						}
+						hints.push(`${confirmKey} confirm`, `${cancelKey} cancel`);
+						addWrappedWithPrefix(" ", theme.fg("dim", hints.join(" • ")));
 					}
 					lines.push(theme.fg("accent", "─".repeat(renderWidth)));
 
@@ -402,6 +480,9 @@ export default function questionnaire(pi: ExtensionAPI) {
 
 			const answerLines = result.answers.map((a) => {
 				const qLabel = questions.find((q) => q.id === a.id)?.label || a.id;
+				if ("values" in a) {
+					return `${qLabel}: ${JSON.stringify({ values: a.values, labels: a.labels, custom: a.custom })}`;
+				}
 				if (a.wasCustom) {
 					return `${qLabel}: user wrote: ${a.label}`;
 				}
@@ -436,6 +517,9 @@ export default function questionnaire(pi: ExtensionAPI) {
 				return new Text(theme.fg("warning", "Cancelled"), 0, 0);
 			}
 			const lines = details.answers.map((a) => {
+				if ("values" in a) {
+					return `${theme.fg("success", "✓ ")}${theme.fg("accent", a.id)}: ${answerSummary(a)}`;
+				}
 				if (a.wasCustom) {
 					return `${theme.fg("success", "✓ ")}${theme.fg("accent", a.id)}: ${theme.fg("muted", "(wrote) ")}${a.label}`;
 				}
