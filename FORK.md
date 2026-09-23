@@ -6,8 +6,13 @@ A personal fork of [earendil-works/pi](https://github.com/earendil-works/pi)
 fork means reproducing the upstream release shape so existing tooling — mise
 `exe=`, overlay `fetchurl`, update scripts — consumes it without modification.
 
-Remotes: `origin` = upstream (`earendil-works/pi`), `fork` = this fork
-(`alleneubank/pi`).
+This procedure adopts the operator's [fork release instructions](https://gist.github.com/alleneubank/bf7d25542a49b136671db0e4bb65226d).
+For this personal fork, it takes precedence over upstream-only Git and release
+rules in `AGENTS.md` and `.pi/skills/release.md`.
+
+Remote roles in this checkout: `origin` = source project, `fork` = personal
+publishing repository (`alleneubank/pi`). Inspect `git remote -v` before acting;
+remote names and historical upstream URLs are not proof of their current role.
 
 ## One default branch
 
@@ -44,11 +49,29 @@ Commit-type discipline:
 - **Amend, don't accrete.** Iterating on an unmerged feature (review feedback,
   dogfood fixes, rebase resolution) rewrites the existing `feat` commit with
   `git commit --amend` / a history rewrite — never stack `fix:` commits for your
-  own work-in-progress.
+  own work-in-progress, even when the personal fork has published the old shape.
+  Local rewrite authorization does not itself authorize publishing the rewritten
+  branch. Preserve existing release tags and assets; cut a new release from the
+  rewritten tip instead of replacing an old release.
 - **`fix` is for a real patch to upstream** — a genuine defect in already-merged
   upstream code — not for iterating on your own unreviewed feature.
 - **`main` is mostly `feat`.** New capability → `feat`; a real upstream bug fix
   → `fix`; everything else (release plumbing, fork docs) is `[fork]`.
+
+## History rewrite safety
+
+Before a requested amend or rebase, preserve unrelated work, create an annotated
+recovery tag at the old tip, and record the current fork remote SHA. Afterward,
+compare against that recovery point: only the intended feature and doctrine
+changes may differ. Keep fork-only doctrine in a separate `[fork]` commit rather
+than folding it into an upstream-bound feature. Do not expand a feature amend
+into an unrelated upstream rebase.
+
+Publication of rewritten history requires explicit operator authorization for
+the named fork ref. Restate the repository, branch, old SHA, and new SHA, then
+push with an explicit lease. Never use plain `--force`, rewrite upstream/shared
+branches, bypass checks, or refresh the expected SHA just to overcome a rejected
+lease. Investigate remote movement instead.
 
 ## Sync loop
 
@@ -70,9 +93,9 @@ repo root:
    file means abort and report, not guess.
 2. **Publish the rewritten ref only with explicit operator authorization.**
    Preserve the annotated backup locally and verify the intended final tree.
-   Use `--force-with-lease` (single-author fork; never plain `--force`):
+   Use the recorded remote SHA as the lease (single-author fork only):
    ```bash
-   git push fork main:main --force-with-lease
+   git push --force-with-lease=refs/heads/main:<expected-old-sha> fork HEAD:refs/heads/main
    ```
 3. **Cut the release** from `main` with `scripts/release-fork.sh` (dry-run first;
    `--publish` is the boundary), then bump the pinned version, `mise lock`,
@@ -87,8 +110,14 @@ repo root:
 
 ## Releasing
 
-`scripts/release-fork.sh` builds the binaries and cuts a prerelease. The
-inherited Build Binaries and Publish Model Catalog workflows are restricted to
+`scripts/release-fork.sh` builds the binaries and cuts a prerelease. Do not run
+`npm run release:patch` or `npm run release:minor` for this flow: fork releases
+do not bump workspace versions, publish npm packages, require the upstream
+`/cl` gate, or announce on pi.dev. Audit affected unreleased changelog entries
+directly when appropriate; released sections remain immutable. A release
+request authorizes the builds needed for that release.
+
+The inherited Build Binaries and Publish Model Catalog workflows are restricted to
 `earendil-works/pi`; fork activity must not start upstream publication or compete
 with the fork archives. The contract:
 
@@ -128,6 +157,17 @@ with the fork archives. The contract:
 - **Dry-run by default; `--publish` is the boundary.** Tag push + `gh release`
   are the deliberate publish.
 
+### Verification
+
+Run the affected tests and `npm run check`, reusing passing evidence while its
+inputs are unchanged. Require a clean committed tree before the dry build.
+Verify both archive platform identities, checksums, and committed resource
+manifests. Smoke-test the packaged binary outside the repository: version,
+help, model listing, interactive startup, and a real prompt with the intended
+provider. Follow [.pi/skills/interactive-testing.md](.pi/skills/interactive-testing.md)
+for terminal checks. Report the exact platform coverage; failed required checks
+block publication unless the operator explicitly accepts the risk.
+
 ### Publish the verified archives
 
 `--publish` rebuilds before uploading. When smoke evidence must bind to the exact
@@ -138,13 +178,25 @@ verify the clean source revision still matches its `g<sha>` suffix, the `fork`
 remote targets `alleneubank/pi`, and `shasum -a 256 -c checksums.txt` passes in
 `dist/fork-release/binaries`. Publish both platform archives and that checksum
 file as a GitHub prerelease; retain their digests with the smoke evidence.
+Verify the published tag's commit and freshly downloaded asset checksums.
+Branch publication is separate from tag/release publication. Inspect remote
+state before recovering a partial failure; never overwrite an existing release.
 
 ## Consumption
 
-Pin the exact tag in mise (`github:alleneubank/pi`, `exe = "pi"`), then
-`mise lock --global -p macos-arm64,linux-x64` and `mise install`. Keep the fork
-out of any competing manager — a stray `npm:`/brew shim precedes `~/.local/bin`
-on PATH and shadows it.
+Pin the exact tag in mise (`github:alleneubank/pi`, `exe = "pi"`), generate a
+cross-platform lock, and install locked. For `../dotfiles`, read its repository
+instructions and `docs/fleet-operations.md`: only its enrolled lock-author host
+may resolve the shared lock. Commit the exact version pin and matching lock
+together. Re-vendor `pi/extensions/questionnaire.ts` byte-for-byte from the
+published release's example when it changes; never patch that copy separately.
+Run the focused release/link checks and required offline repository gate, then
+publish through the authorized `deploy.sh` workflow. Verify installed versions
+and extension source identity on the hosts actually updated; publication alone
+does not prove fleet convergence. Restart Pi after a binary upgrade.
+
+Keep the fork out of any competing manager — a stray `npm:`/brew shim precedes
+`~/.local/bin` on PATH and shadows it.
 
 Nix overlay consumers point their overlay's update script at this repo
 (repo-targeting) and pin `pi-<platform>.tar.gz` + sha256 per platform.
