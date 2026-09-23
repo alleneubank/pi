@@ -10,6 +10,7 @@
 
 ### Added
 
+- Added per-question multi-select to the questionnaire extension example, with checkbox toggling, combined custom answers, submission review, and configurable shortcuts.
 - Added `outputPad` to the tool render context ([#10557](https://github.com/earendil-works/pi/pull/10557) by [@rwachtler](https://github.com/rwachtler))
 - Added mid-prompt skill autocomplete for slash-led `skill:` references on later lines; `Enter` or `Tab` accepts them without submitting the prompt.
 - Exported `buildSystemPrompt` from the package root and the lightweight `@earendil-works/pi-coding-agent/system-prompt` subpath.

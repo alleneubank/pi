@@ -43,6 +43,9 @@ export interface AppKeybindings {
 	"app.session.rename": true;
 	"app.session.delete": true;
 	"app.session.deleteNoninvasive": true;
+	"app.questionnaire.toggle": true;
+	"app.questionnaire.next": true;
+	"app.questionnaire.previous": true;
 	"app.models.save": true;
 	"app.models.enableAll": true;
 	"app.models.clearAll": true;
@@ -187,6 +190,12 @@ export const KEYBINDINGS = {
 	"app.session.deleteNoninvasive": {
 		defaultKeys: "ctrl+backspace",
 		description: "Delete session when query is empty",
+	},
+	"app.questionnaire.toggle": { defaultKeys: "space", description: "Toggle questionnaire option" },
+	"app.questionnaire.next": { defaultKeys: ["tab", "right"], description: "Next questionnaire tab" },
+	"app.questionnaire.previous": {
+		defaultKeys: ["shift+tab", "left"],
+		description: "Previous questionnaire tab",
 	},
 	"app.models.save": {
 		defaultKeys: "ctrl+s",
