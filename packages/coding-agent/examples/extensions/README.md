@@ -63,7 +63,7 @@ The `questionnaire` tool accepts `multiSelect: true` on individual questions. Qu
 }
 ```
 
-In multi-select questions, Space toggles options and Enter confirms at least one selection. The optional “Type something” row opens a text editor; submitting text returns to the choices and retains checked options. Space on an existing custom answer clears it. Single-question calls finish on confirmation; multi-question calls have a final review tab. Changing a confirmed selection requires confirming that question again before submission, while tab navigation preserves unfinished selections.
+In multi-select questions, Space toggles options and Enter confirms at least one selection. The optional “Type something” row opens a text editor; submitting text returns to the choices and retains checked options. Space on an existing custom answer clears it. Single-question calls finish on confirmation; multi-question calls have a final review tab that allows submission with some or all questions unanswered. Only confirmed answers are submitted; unanswered questions are reported separately. Changing a confirmed selection makes that question unanswered until it is confirmed again, while tab navigation preserves unfinished selections.
 
 Multi-select answers in tool-result `details.answers` contain `id`, `values`, `labels`, and optional `custom` text. The model receives the arrays as JSON, preserving values containing commas. Single-select answers retain `value`, `label`, `wasCustom`, and optional `index`.
 
