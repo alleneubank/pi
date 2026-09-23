@@ -319,6 +319,18 @@
       "$ref": "#/$defs/KeybindingValue",
       "description": "Delete session when query is empty"
     },
+    "app.questionnaire.toggle": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Toggle questionnaire option"
+    },
+    "app.questionnaire.next": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Next questionnaire tab"
+    },
+    "app.questionnaire.previous": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Previous questionnaire tab"
+    },
     "app.models.save": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Save model selection"

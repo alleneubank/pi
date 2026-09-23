@@ -10,6 +10,7 @@
 ### Added
 
 - `pi update` now lists each updated package with its npm version or git commit change, for example `npm:foo 1.2.0 -> 1.3.0`, and prints `Packages are already up to date` when nothing changed. When nothing changed but an update printed a warning, for example because npm left the old version installed after resolving stale registry metadata, it prints `No packages were updated, see the warnings above` instead; in offline mode it prints `Skipped package updates (offline mode)`. `PackageManager.update()` reports each changed package as a new `result` progress event whose `message` holds that line ([#11707](https://github.com/earendil-works/pi/pull/11707), [#11711](https://github.com/earendil-works/pi/pull/11711))
+- Added per-question multi-select to the questionnaire extension example, with checkbox toggling, combined custom answers, submission review, and configurable shortcuts.
 - Added mid-prompt skill autocomplete for slash-led `skill:` references on later lines; `Enter` or `Tab` accepts them without submitting the prompt.
 - Exported `buildSystemPrompt` from the package root and the lightweight `@earendil-works/pi-coding-agent/system-prompt` subpath.
 - Added system-prompt inspection examples for rendering Pi prompts and capturing, extracting, and comparing other coding agents' prompts.
