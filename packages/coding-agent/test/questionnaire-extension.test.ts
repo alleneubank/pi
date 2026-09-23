@@ -58,13 +58,16 @@ afterEach(() => {
 	setKeybindings(previousKeybindings);
 });
 
-async function openQuestionnaire(questions: object[], bindings: KeybindingsConfig = {}) {
-	const extension = await loadExtensionFromFactory(
-		questionnaire,
-		process.cwd(),
-		createEventBus(),
-		createExtensionRuntime(),
-	);
+async function openQuestionnaire(
+	questions: object[],
+	bindings: KeybindingsConfig = {},
+	signal?: AbortSignal,
+	failUI = false,
+) {
+	const events: unknown[] = [];
+	const eventBus = createEventBus();
+	eventBus.on("pi:user-input", (event) => events.push(event));
+	const extension = await loadExtensionFromFactory(questionnaire, process.cwd(), eventBus, createExtensionRuntime());
 	const tool = extension.tools.get("questionnaire")!.definition;
 	const kb = new KeybindingsManager(bindings);
 	setKeybindings(kb);
@@ -93,13 +96,20 @@ async function openQuestionnaire(questions: object[], bindings: KeybindingsConfi
 			finish(value);
 		});
 		ready();
+		if (failUI) throw new Error("UI mount failed");
 		return answer;
 	};
-	const ctx = { mode: "tui", hasUI: true, ui: { custom } } as ExtensionContext;
-	const result = tool.execute("questionnaire-test", { questions }, undefined, undefined, ctx);
+	const ctx = {
+		mode: "tui",
+		hasUI: true,
+		ui: { custom },
+		sessionManager: { getSessionId: () => "questionnaire-session" },
+	} as ExtensionContext;
+	const result = tool.execute("questionnaire-test", { questions }, signal, undefined, ctx);
 	await opened;
 	return {
 		result,
+		events,
 		tool,
 		completed: () => completed,
 		press: (...keys: string[]) => {
@@ -113,6 +123,57 @@ async function openQuestionnaire(questions: object[], bindings: KeybindingsConfi
 }
 
 describe("questionnaire example", () => {
+	it.each(["answer", "cancel", "abort"])("announces one input request and clears it on %s", async (end) => {
+		const controller = new AbortController();
+		const ui = await openQuestionnaire([targets, runtime], {}, controller.signal);
+		const request = {
+			requestId: "questionnaire-test",
+			sessionId: "questionnaire-session",
+			toolName: "questionnaire",
+			summary: "Questionnaire needs your input",
+		};
+		expect(ui.events).toEqual([{ ...request, type: "opened" }]);
+		ui.press(tab, previousTab);
+		expect(ui.events).toHaveLength(1);
+		if (end === "abort") controller.abort();
+		else if (end === "cancel") ui.press(esc);
+		else ui.press(enter, enter, enter);
+		expect((await ui.result).details).toMatchObject({ cancelled: end !== "answer" });
+		expect(ui.events).toEqual([
+			{ ...request, type: "opened" },
+			{ ...request, type: "closed" },
+		]);
+		controller.abort();
+		expect(ui.events).toHaveLength(2);
+	});
+
+	it("clears the input request if mounting the UI fails", async () => {
+		const ui = await openQuestionnaire([targets], {}, undefined, true);
+		await expect(ui.result).rejects.toThrow("UI mount failed");
+		expect(ui.events).toEqual([
+			expect.objectContaining({ type: "opened", requestId: "questionnaire-test" }),
+			expect.objectContaining({ type: "closed", requestId: "questionnaire-test" }),
+		]);
+	});
+
+	it.each(["non-tui", "empty", "aborted"])("does not announce an input request for %s input", async (reason) => {
+		const events: unknown[] = [];
+		const bus = createEventBus();
+		bus.on("pi:user-input", (event) => events.push(event));
+		const extension = await loadExtensionFromFactory(questionnaire, process.cwd(), bus, createExtensionRuntime());
+		const tool = extension.tools.get("questionnaire")!.definition;
+		const ctx = { mode: reason === "non-tui" ? "rpc" : "tui" } as ExtensionContext;
+		const result = await tool.execute(
+			"unopened",
+			{ questions: reason === "empty" ? [] : [targets] },
+			reason === "aborted" ? AbortSignal.abort() : undefined,
+			undefined,
+			ctx,
+		);
+		expect(result.details).toMatchObject({ cancelled: true });
+		expect(events).toEqual([]);
+	});
+
 	it("keeps single-select as the default and returns the original answer shape", async () => {
 		const ui = await openQuestionnaire([targets]);
 		expect(ui.render()).not.toContain("[ ]");
