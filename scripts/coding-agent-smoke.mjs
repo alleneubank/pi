@@ -53,7 +53,7 @@ export function smokeTestCodingAgent(directory, runtime = process.execPath) {
 import { buildSystemPrompt, createAgentSession, SessionManager, ModelRuntime } from "${codingAgentName}";
 import { buildSystemPrompt as renderSystemPrompt } from "${codingAgentName}/system-prompt";
 for (const render of [buildSystemPrompt, renderSystemPrompt]) {
-  assert.equal(render({ customPrompt: "Consumer prompt", cwd: "/consumer" }), "Consumer prompt\\nCurrent working directory: /consumer\\n");
+  assert.equal(render({ customPrompt: "Consumer prompt", cwd: "/consumer" }), "Consumer prompt\\n\\n<cwd>\\n/consumer\\n</cwd>");
 }
 assert.equal(typeof createAgentSession, "function");
 assert.equal(typeof SessionManager.inMemory, "function");
