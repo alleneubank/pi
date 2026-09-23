@@ -118,6 +118,24 @@ Use `ctx.signal` for nested work owned by an active turn; commands and idle sess
 
 A `user_bash` handler that returns `undefined` passes the command to the next handler and then to local execution if no handler handles it. Returning `operations` or `result` stops propagation. A handler failure blocks the command rather than falling through to local execution.
 
+### Inter-extension input requests
+
+The questionnaire example reports a synchronous user wait on the shared `pi.events` channel `pi:user-input`. This is an extension convention, not a core `pi.on()` lifecycle event. Notification and attention extensions can subscribe without the questionnaire depending on a terminal protocol or broker.
+
+Each event is a plain object with these fields:
+
+- `type`: `"opened"` or `"closed"`.
+- `requestId`: unique within the session; a tool uses its tool-call ID.
+- `sessionId`: the current session ID.
+- `toolName`: the requesting tool's name.
+- `summary`: a static, content-free description such as `"Questionnaire needs your input"`.
+
+String fields are non-empty and at most 256 characters. Question text, choices, answers, paths, credentials, and live context objects do not belong in the payload. Delivery is local to the running extension runtime, with no persistence or replay; `emit()` does not wait for asynchronous listeners.
+
+A producer emits `opened` once when presenting the interaction, not on tab navigation. It emits the matching `closed` from cleanup on answer, cancellation, abort, or UI failure. An invalid or already-aborted request that never opens UI emits neither event. The questionnaire closes its custom UI when its tool signal aborts.
+
+Consumers validate the payload, filter by their current session, deduplicate request IDs, and keep a bounded set of open requests. A close for an unknown request or another session is ignored. Any remaining request keeps attention blocked over ordinary tool heartbeats. Session shutdown and replacement discard pending state. Notification text should be consumer-owned and generic rather than interpolating event content. Core `agent_settled` still means the complete run has ended; it is not a substitute for a mid-tool input request.
+
 <a id="custom-tools"></a>
 <a id="register-tools"></a>
 
