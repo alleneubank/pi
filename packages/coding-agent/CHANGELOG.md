@@ -10,6 +10,7 @@
 
 ### Added
 
+- Added paired `pi:user-input` events to the questionnaire example so notification extensions can observe mid-turn user waits, including cleanup on cancellation and abort.
 - Added per-question multi-select to the questionnaire extension example, with checkbox toggling, combined custom answers, submission review, and configurable shortcuts.
 - Added mid-prompt skill autocomplete for slash-led `skill:` references on later lines; `Enter` or `Tab` accepts them without submitting the prompt.
 - Exported `buildSystemPrompt` from the package root and the lightweight `@earendil-works/pi-coding-agent/system-prompt` subpath.
