@@ -1,5 +1,13 @@
 # Development Rules
 
+## Personal fork
+
+This checkout's dogfood and release repository is `alleneubank/pi`. For work on
+that fork, [FORK.md](FORK.md) governs commit separation, authorized history
+rewrites, and prerelease publication. Its fork-specific rules take precedence
+where this file describes the upstream workflow. They do not apply to upstream
+branches or pull requests.
+
 ## Conversational Style
 
 - Keep answers short and concise
@@ -59,7 +67,7 @@ Committing:
 - Stage explicit paths (`git add <path1> <path2>`); never `git add -A` / `git add .`.
 - Before committing, run `git status` and verify you are only staging your files.
 - `packages/ai/src/models.generated.ts` may always be included alongside your files.
-- Message format: `{feat,fix,docs}[(ai,tui,agent,coding-agent)]: <commit message> (optionally multiple lines)`. Message is informative and concise.
+- Upstream-bound message format: `{feat,fix,docs}[(ai,tui,agent,coding-agent)]: <commit message> (optionally multiple lines)`. Message is informative and concise. Fork-only commits use `[fork] <type>(<scope>): <summary>` and remain separate from upstream-bound changes; see [FORK.md](FORK.md).
 
 Never run (destroys other agents' work or bypasses checks):
 
@@ -69,7 +77,7 @@ If rebase conflicts occur:
 
 - Resolve conflicts only in files you modified.
 - If a conflict is in a file you did not modify, abort and ask the user.
-- Never force push.
+- Never force push upstream or shared branches. The single-author personal fork has a narrow exception for explicitly authorized rewrites: an annotated recovery tag, a verified expected remote tip, and `--force-with-lease` on the named fork ref are required. Never use plain `--force`. See [FORK.md](FORK.md).
 
 ## Issues and PRs
 
@@ -118,7 +126,12 @@ Attribution:
 
 ## Releasing
 
-For release preparation, publishing, verification, or recovery, load and follow [.pi/skills/release.md](.pi/skills/release.md).
+For personal fork prereleases consumed through mise and `../dotfiles`, follow
+[FORK.md](FORK.md) and `scripts/release-fork.sh`. Do not run the upstream npm
+release script or require its `/cl` gate for a fork prerelease.
+
+For upstream npm release preparation, publishing, verification, or recovery,
+load and follow [.pi/skills/release.md](.pi/skills/release.md).
 
 ## User Override
 
