@@ -182,6 +182,16 @@ On native Windows, `app.suspend` has no default because Windows terminals do not
 | `app.tree.filter.cycleForward` | `ctrl+o` | Cycle tree filter forward |
 | `app.tree.filter.cycleBackward` | `shift+ctrl+o` | Cycle tree filter backward |
 
+### Questionnaire Extension
+
+Used by the bundled `questionnaire.ts` extension example when loaded. Selection movement, confirmation, and cancellation use the `tui.select.*` actions above.
+
+| Keybinding id | Default | Description |
+|---|---|---|
+| `app.questionnaire.toggle` | `space` | Toggle a multi-select option |
+| `app.questionnaire.next` | `tab`, `right` | Next question or review tab |
+| `app.questionnaire.previous` | `shift+tab`, `left` | Previous question or review tab |
+
 ### Scoped Models Selector
 
 Used inside the scoped models selector (opened via `/scoped-models`).
