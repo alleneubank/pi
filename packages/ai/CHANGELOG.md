@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed GitHub Copilot Claude Opus 5.5 exposing unsupported off and minimal thinking levels after model catalog regeneration.
+
 ## [0.87.1] - 2026-09-22
 
 ### Added
